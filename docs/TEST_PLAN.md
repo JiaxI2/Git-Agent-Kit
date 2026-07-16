@@ -28,6 +28,17 @@ GitHub I/O 聚焦测试还必须覆盖：
 
 配置加载需覆盖 JSON、YAML、YML 三种单一来源，以及多格式并存失败关闭；权限
 默认值需确认 Agent 只能申请 Draft PR，批准、合并和发布主体仍为 `user`。
+JSON/YAML/YML 均须拒绝 unknown fields 和多文档输入；显式 `--config` 应优先于
+自动发现。
+
+`pr request` 聚焦测试还必须覆盖：
+
+1. 仅已认领且 executor 标签匹配的 Issue 可申请；
+2. default/protected/detached/dirty/未推送或远端 SHA 不一致均失败关闭；
+3. `--body-file` 无法读取仓库外文件或经符号链接逃逸；
+4. 默认标题/正文来自 Issue，输出包含 `draft=true`、head SHA 和
+   `PENDING_USER_APPROVAL`；
+5. CLI 不暴露 approve、merge 或 release 子命令。
 
 ### T1 本地沙箱集成
 
@@ -64,7 +75,7 @@ Windows：
 - 一句话创建 Issue；
 - `issue list` 和 `scan` 检测；
 - `claim` 标签迁移和分支创建；
-- 云端 Agent 创建 Draft PR；
+- 云端 Agent 通过 `gia pr request` 创建 Draft PR；
 - `handoff` 评论生成；
 - 本地 worktree 验证；
 - PR HEAD 更新后旧 SHA 验证失败；
@@ -102,6 +113,9 @@ Windows：
 3. 空 `issue list` / `scan` 保持 `data: []`，同时报告 `state`、ready label、limit、可能原因和恢复建议；
 4. `workflow_dispatch` 无 `issue_number` 时成功结束且不修改状态；有编号时只处理 `agent:ready` Issue；
 5. Windows 快速开始中的命令在同一 PowerShell 会话可直接复制执行。
+6. `init --format json|yaml|yml` 输出实际配置路径，多配置歧义给出可恢复错误。
+7. `doctor` 明确提示 permissions 是 workflow policy，GitHub App/ruleset 才是
+   硬权限边界。
 
 ## 反馈闭环
 

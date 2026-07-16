@@ -53,6 +53,24 @@ func TestDefaultPermissionsAreUserControlled(t *testing.T) {
 	}
 }
 
+func TestExecutorAllowedSupportsWildcardAndDenyAll(t *testing.T) {
+	cfg := Default()
+	if !cfg.ExecutorAllowed("web-agent") {
+		t.Fatal("wildcard executor policy rejected web-agent")
+	}
+	cfg.Permissions.AllowedExecutors = []string{"Local-Agent"}
+	if !cfg.ExecutorAllowed("local-agent") {
+		t.Fatal("executor comparison should be case-insensitive")
+	}
+	if cfg.ExecutorAllowed("web-agent") {
+		t.Fatal("unlisted executor was accepted")
+	}
+	cfg.Permissions.AllowedExecutors = []string{}
+	if cfg.ExecutorAllowed("local-agent") || cfg.ExecutorAllowed("") {
+		t.Fatal("deny-all or empty executor was accepted")
+	}
+}
+
 func TestLoadFromRepoSupportsExactlyOneJSONOrYAMLConfig(t *testing.T) {
 	for _, extension := range []string{".json", ".yaml", ".yml"} {
 		t.Run(extension, func(t *testing.T) {
@@ -107,6 +125,30 @@ permissions:
 	}
 }
 
+func TestLoadExplicitOverridesRepositoryDiscovery(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".gia")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"config.json", "config.yaml"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	explicit := filepath.Join(repo, "review-config.yml")
+	if err := os.WriteFile(explicit, []byte("defaultBranch: review\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(repo, "review-config.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultBranch != "review" {
+		t.Fatalf("explicit default branch=%q", cfg.DefaultBranch)
+	}
+}
+
 func TestLoadFromRepoFailsClosedForMissingOrMultipleConfigs(t *testing.T) {
 	t.Run("missing", func(t *testing.T) {
 		repo := t.TempDir()
@@ -130,6 +172,72 @@ func TestLoadFromRepoFailsClosedForMissingOrMultipleConfigs(t *testing.T) {
 			t.Fatalf("LoadFromRepo() error = %v", err)
 		}
 	})
+}
+
+func TestLoadRejectsUnknownFieldsAndMultipleDocuments(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    string
+		content string
+		want    string
+	}{
+		{name: "json unknown", file: "config.json", content: `{"schemaVersion":1,"defualtBranch":"main"}`, want: "unknown field"},
+		{name: "yaml unknown", file: "config.yaml", content: "schemaVersion: 1\ndefualtBranch: main\n", want: "field defualtBranch not found"},
+		{name: "yml nested unknown", file: "config.yml", content: "validation:\n  requireCleam: true\n", want: "field requireCleam not found"},
+		{name: "json multiple", file: "config.json", content: "{}\n{}\n", want: "multiple configuration documents"},
+		{name: "yaml multiple", file: "config.yaml", content: "{}\n---\n{}\n", want: "multiple configuration documents"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			dir := filepath.Join(repo, ".gia")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, tt.file), []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadFromRepo(repo)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("LoadFromRepo() error=%v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSaveUsesRequestedJSONOrYAMLFormat(t *testing.T) {
+	for _, extension := range []string{".json", ".yaml", ".yml"} {
+		t.Run(extension, func(t *testing.T) {
+			repo := t.TempDir()
+			dir := filepath.Join(repo, ".gia")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "config"+extension)
+			want := Default()
+			want.DefaultBranch = "review"
+			if err := Save(path, want); err != nil {
+				t.Fatal(err)
+			}
+			got, err := LoadFromRepo(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.DefaultBranch != "review" {
+				t.Fatalf("loaded default branch=%q", got.DefaultBranch)
+			}
+		})
+	}
+}
+
+func TestPathForFormatRejectsUnsupportedFormat(t *testing.T) {
+	path, err := PathForFormat("repo", "YML")
+	if err != nil || path != filepath.Join("repo", ".gia", "config.yml") {
+		t.Fatalf("PathForFormat() path=%q err=%v", path, err)
+	}
+	if _, err := PathForFormat("repo", "toml"); err == nil {
+		t.Fatal("unsupported format was accepted")
+	}
 }
 
 func TestLoadFromRepoAppliesPermissionDefaultsOnlyWhenOmitted(t *testing.T) {

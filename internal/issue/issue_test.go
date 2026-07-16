@@ -220,6 +220,35 @@ func TestListReadyProvidesReusableIssueListAPI(t *testing.T) {
 	}
 }
 
+func TestGetReturnsIssueTitleBodyAndLabels(t *testing.T) {
+	withGitHubRunners(t,
+		func(_ context.Context, _ string, args ...string) (string, error) {
+			switch strings.Join(args[:2], " ") {
+			case "repo view":
+				return "owner/repo", nil
+			case "issue view":
+				if !slices.Contains(args, "number,title,body,url,labels") {
+					t.Fatalf("issue body was not requested: %v", args)
+				}
+				return `{"number":7,"title":"Task title","body":"line one\nline two","url":"https://github.com/owner/repo/issues/7","labels":[{"name":"agent:claimed"}]}`, nil
+			default:
+				return "", fmt.Errorf("unexpected gh args: %v", args)
+			}
+		},
+		func(_ context.Context, _ string, _ string, _ ...string) (string, error) {
+			return "", errors.New("unexpected body call")
+		},
+	)
+
+	got, err := Get(context.Background(), t.TempDir(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Number != 7 || got.Title != "Task title" || got.Body != "line one\nline two" || !slices.Equal(got.Labels, []string{"agent:claimed"}) {
+		t.Fatalf("detail=%+v", got)
+	}
+}
+
 func TestListRejectsEmptyOutput(t *testing.T) {
 	withGitHubRunners(t,
 		func(_ context.Context, _ string, args ...string) (string, error) {

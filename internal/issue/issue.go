@@ -30,6 +30,13 @@ type Item struct {
 	URL    string   `json:"url"`
 	Labels []string `json:"labels"`
 }
+type Detail struct {
+	Number int      `json:"number"`
+	Title  string   `json:"title"`
+	Body   string   `json:"body"`
+	URL    string   `json:"url"`
+	Labels []string `json:"labels"`
+}
 type ListOptions struct {
 	State  string
 	Labels []string
@@ -39,6 +46,7 @@ type ListOptions struct {
 type issueRecord struct {
 	Number int    `json:"number"`
 	Title  string `json:"title"`
+	Body   string `json:"body"`
 	URL    string `json:"url"`
 	Labels []struct {
 		Name string `json:"name"`
@@ -138,6 +146,35 @@ func Create(ctx context.Context, repo string, spec Spec, cfg config.Config) (Cre
 
 func Scan(ctx context.Context, repo string, limit int, cfg config.Config) ([]Item, error) {
 	return ListReady(ctx, repo, limit, cfg)
+}
+
+func Get(ctx context.Context, repo string, number int) (Detail, error) {
+	if number <= 0 {
+		return Detail{}, fmt.Errorf("issue number must be positive")
+	}
+	full, err := repoName(ctx, repo)
+	if err != nil {
+		return Detail{}, err
+	}
+	record, err := viewIssue(ctx, repo, full, number)
+	if err != nil {
+		return Detail{}, err
+	}
+	labels := make([]string, 0, len(record.Labels))
+	for _, label := range record.Labels {
+		name := strings.TrimSpace(label.Name)
+		if name == "" {
+			return Detail{}, fmt.Errorf("gh issue view returned an empty label for issue #%d", number)
+		}
+		labels = append(labels, name)
+	}
+	return Detail{
+		Number: record.Number,
+		Title:  record.Title,
+		Body:   record.Body,
+		URL:    record.URL,
+		Labels: labels,
+	}, nil
 }
 
 func ListReady(ctx context.Context, repo string, limit int, cfg config.Config) ([]Item, error) {
@@ -280,7 +317,7 @@ func repositoryLabels(ctx context.Context, repo, full string) (map[string]bool, 
 }
 
 func viewIssue(ctx context.Context, repo, full string, number int) (issueRecord, error) {
-	out, err := runGitHub(ctx, repo, "issue", "view", strconv.Itoa(number), "--repo", full, "--json", "number,title,url,labels")
+	out, err := runGitHub(ctx, repo, "issue", "view", strconv.Itoa(number), "--repo", full, "--json", "number,title,body,url,labels")
 	if err != nil {
 		return issueRecord{}, err
 	}

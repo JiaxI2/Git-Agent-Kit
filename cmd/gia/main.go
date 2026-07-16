@@ -41,6 +41,22 @@ type initData struct {
 	NextSteps []string `json:"nextSteps"`
 }
 
+type prRequestData struct {
+	Number   int    `json:"number"`
+	URL      string `json:"url"`
+	Draft    bool   `json:"draft"`
+	State    string `json:"state"`
+	Issue    int    `json:"issue"`
+	Base     string `json:"base"`
+	Head     string `json:"head"`
+	HeadSHA  string `json:"headSha"`
+	Title    string `json:"title"`
+	Executor string `json:"executor"`
+}
+
+var getIssueDetail = issue.Get
+var requestDraftPullRequest = workflow.RequestDraftPullRequest
+
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
 		emit(output{OK: false, Error: err.Error()})
@@ -70,6 +86,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdScan(ctx, args[1:])
 	case "claim":
 		return cmdClaim(ctx, args[1:])
+	case "pr":
+		return cmdPR(ctx, args[1:])
 	case "worktree":
 		return cmdWorktree(ctx, args[1:])
 	case "validate":
@@ -90,6 +108,7 @@ func run(ctx context.Context, args []string) error {
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "target repository")
+	format := fs.String("format", "json", "json|yaml|yml")
 	force := fs.Bool("force", false, "overwrite existing config")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -98,17 +117,23 @@ func cmdInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := workflow.Initialize(abs, *force); err != nil {
+	configPath, err := workflow.InitializeWithFormat(abs, *format, *force)
+	if err != nil {
 		return err
 	}
+	displayConfig, err := filepath.Rel(abs, configPath)
+	if err != nil {
+		displayConfig = configPath
+	}
+	displayConfig = filepath.ToSlash(displayConfig)
 	emit(output{
 		OK:      true,
 		Command: "init",
 		Data: initData{
 			Repo:   abs,
-			Config: filepath.Join(abs, ".gia", "config.json"),
+			Config: configPath,
 			NextSteps: []string{
-				"检查 .gia/config.json，并按目标仓库技术栈调整验证命令。",
+				"检查 " + displayConfig + "，并按目标仓库技术栈调整验证命令。",
 				"若团队共享配置：git add .gia && git commit；若仅本地使用：将 .gia/ 加入 .gitignore。",
 				"运行 gia doctor --repo <repository> 检查 Git、GitHub CLI、认证和配置。",
 			},
@@ -120,10 +145,11 @@ func cmdInit(args []string) error {
 func cmdDoctor(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
+	configPath := addConfigFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	report := workflow.Doctor(ctx, *repo)
+	report := workflow.DoctorWithConfig(ctx, *repo, *configPath)
 	emit(output{OK: report.OK, Command: "doctor", Data: report})
 	if !report.OK {
 		return errors.New("doctor checks failed")
@@ -143,6 +169,7 @@ func cmdIssue(ctx context.Context, args []string) error {
 	}
 	fs := flag.NewFlagSet("issue create", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
+	configPath := addConfigFlag(fs)
 	direction := fs.String("direction", "", "optimization direction or task request")
 	risk := fs.String("risk", "auto", "auto|low|medium|high")
 	executor := fs.String("executor", "web-agent", "preferred executor")
@@ -153,9 +180,12 @@ func cmdIssue(ctx context.Context, args []string) error {
 	if strings.TrimSpace(*direction) == "" {
 		return errors.New("--direction is required")
 	}
-	cfg, err := config.LoadFromRepo(*repo)
+	cfg, err := config.Load(*repo, *configPath)
 	if err != nil {
 		return err
+	}
+	if !cfg.ExecutorAllowed(*executor) {
+		return fmt.Errorf("executor %q is not allowed by permissions.allowedExecutors", strings.TrimSpace(*executor))
 	}
 	spec := issue.FromDirection(*direction, *risk, *executor, cfg)
 	if *dryRun {
@@ -181,6 +211,7 @@ func cmdIssueList(ctx context.Context, args []string) error {
 func listIssues(ctx context.Context, args []string, command string) error {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
+	configPath := addConfigFlag(fs)
 	limit := fs.Int("limit", 20, "maximum issues")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -188,7 +219,7 @@ func listIssues(ctx context.Context, args []string, command string) error {
 	if *limit <= 0 {
 		return errors.New("--limit must be greater than zero")
 	}
-	cfg, err := config.LoadFromRepo(*repo)
+	cfg, err := config.Load(*repo, *configPath)
 	if err != nil {
 		return err
 	}
@@ -217,7 +248,7 @@ func issueListOutput(command string, items []issue.Item, cfg config.Config, limi
 			},
 			NextSteps: []string{
 				"运行 gia issue create --repo <repository> --direction <text> 创建任务。",
-				"在 GitHub 检查 Issue 状态和标签，或核对 .gia/config.json 的 issue.readyLabel。",
+				"在 GitHub 检查 Issue 状态和标签，或核对生效配置的 issue.readyLabel。",
 				"运行 gia doctor --repo <repository> 检查 GitHub CLI 与认证。",
 			},
 		}
@@ -228,6 +259,7 @@ func issueListOutput(command string, items []issue.Item, cfg config.Config, limi
 func cmdClaim(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("claim", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
+	configPath := addConfigFlag(fs)
 	number := fs.Int("issue", 0, "issue number")
 	executor := fs.String("executor", "web-agent", "executor")
 	if err := fs.Parse(args); err != nil {
@@ -236,9 +268,12 @@ func cmdClaim(ctx context.Context, args []string) error {
 	if *number <= 0 {
 		return errors.New("--issue is required")
 	}
-	cfg, err := config.LoadFromRepo(*repo)
+	cfg, err := config.Load(*repo, *configPath)
 	if err != nil {
 		return err
+	}
+	if !cfg.ExecutorAllowed(*executor) {
+		return fmt.Errorf("executor %q is not allowed by permissions.allowedExecutors", strings.TrimSpace(*executor))
 	}
 	result, err := workflow.Claim(ctx, *repo, *number, *executor, cfg)
 	if err != nil {
@@ -246,6 +281,179 @@ func cmdClaim(ctx context.Context, args []string) error {
 	}
 	emit(output{OK: true, Command: "claim", Data: result})
 	return nil
+}
+
+func cmdPR(ctx context.Context, args []string) error {
+	if len(args) == 0 || args[0] != "request" {
+		return errors.New("usage: gia pr request --issue <number>")
+	}
+	fs := flag.NewFlagSet("pr request", flag.ContinueOnError)
+	repo := fs.String("repo", ".", "repository")
+	configPath := addConfigFlag(fs)
+	number := fs.Int("issue", 0, "issue number")
+	title := fs.String("title", "", "pull request title; defaults to Issue title")
+	bodyFile := fs.String("body-file", "", "pull request body file that resolves within repository; defaults to Issue body")
+	executor := fs.String("executor", "web-agent", "requesting executor")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *number <= 0 {
+		return errors.New("--issue is required")
+	}
+	cfg, err := config.Load(*repo, *configPath)
+	if err != nil {
+		return err
+	}
+	result, err := prepareDraftPullRequest(ctx, *repo, *number, *title, *bodyFile, *executor, cfg)
+	if err != nil {
+		return err
+	}
+	emit(output{OK: true, Command: "pr request", Data: result})
+	return nil
+}
+
+func prepareDraftPullRequest(ctx context.Context, repo string, issueNumber int, title, bodyFile, executor string, cfg config.Config) (prRequestData, error) {
+	executor = strings.TrimSpace(executor)
+	if !cfg.ExecutorAllowed(executor) {
+		return prRequestData{}, fmt.Errorf("executor %q is not allowed by permissions.allowedExecutors", executor)
+	}
+	repo, err := filepath.Abs(repo)
+	if err != nil {
+		return prRequestData{}, err
+	}
+	base := strings.TrimSpace(cfg.DefaultBranch)
+	if base == "" {
+		return prRequestData{}, errors.New("defaultBranch is required")
+	}
+	branch, err := gitx.Branch(ctx, repo)
+	if err != nil {
+		return prRequestData{}, err
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return prRequestData{}, errors.New("cannot request a Draft PR from detached HEAD")
+	}
+	if branch == base {
+		return prRequestData{}, fmt.Errorf("cannot request a Draft PR from default branch %q", base)
+	}
+	if config.MatchAny(cfg.Protected.Branches, branch) {
+		return prRequestData{}, fmt.Errorf("cannot request a Draft PR from protected branch %q", branch)
+	}
+	clean, err := gitx.IsClean(ctx, repo)
+	if err != nil {
+		return prRequestData{}, err
+	}
+	if !clean {
+		return prRequestData{}, errors.New("repository is dirty; commit or stash changes before requesting a Draft PR")
+	}
+	headSHA, err := gitx.Head(ctx, repo)
+	if err != nil {
+		return prRequestData{}, err
+	}
+	remote := cfg.ValidationRemote()
+	if _, err := gitx.Run(ctx, repo, "fetch", "--prune", remote); err != nil {
+		return prRequestData{}, err
+	}
+	remoteRef := "refs/remotes/" + remote + "/" + branch
+	remoteSHA, err := gitx.Run(ctx, repo, "rev-parse", "--verify", remoteRef+"^{commit}")
+	if err != nil {
+		return prRequestData{}, fmt.Errorf("current branch %q is not available at %s; push it before requesting a Draft PR: %w", branch, remoteRef, err)
+	}
+	if headSHA != remoteSHA {
+		return prRequestData{}, fmt.Errorf("local HEAD %s does not match remote branch tip %s at %s", headSHA, remoteSHA, remoteRef)
+	}
+	detail, err := getIssueDetail(ctx, repo, issueNumber)
+	if err != nil {
+		return prRequestData{}, err
+	}
+	if err := requireClaimedIssue(detail, executor, cfg); err != nil {
+		return prRequestData{}, err
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = detail.Title
+	}
+	body := detail.Body
+	if path := strings.TrimSpace(bodyFile); path != "" {
+		data, err := readRepositoryFile(repo, path)
+		if err != nil {
+			return prRequestData{}, fmt.Errorf("read Draft PR body file %s: %w", path, err)
+		}
+		body = string(data)
+	}
+	created, err := requestDraftPullRequest(ctx, workflow.DraftPullRequestRequest{
+		Repo:     repo,
+		Base:     base,
+		Head:     branch,
+		Title:    title,
+		Body:     body,
+		Executor: executor,
+	})
+	if err != nil {
+		return prRequestData{}, err
+	}
+	if created.State != "PENDING_USER_APPROVAL" {
+		return prRequestData{}, fmt.Errorf("Draft PR returned unexpected workflow state %q", created.State)
+	}
+	return prRequestData{
+		Number:   created.Number,
+		URL:      created.URL,
+		Draft:    true,
+		State:    created.State,
+		Issue:    issueNumber,
+		Base:     created.Base,
+		Head:     created.Head,
+		HeadSHA:  headSHA,
+		Title:    created.Title,
+		Executor: created.Executor,
+	}, nil
+}
+
+func requireClaimedIssue(detail issue.Detail, executor string, cfg config.Config) error {
+	claimedLabel := strings.TrimSpace(cfg.Issue.ClaimedLabel)
+	if claimedLabel == "" {
+		return errors.New("issue.claimedLabel is required")
+	}
+	claimed := false
+	for _, label := range detail.Labels {
+		label = strings.TrimSpace(label)
+		if strings.EqualFold(label, claimedLabel) {
+			claimed = true
+		}
+		if strings.HasPrefix(strings.ToLower(label), "executor:") {
+			labelExecutor := strings.TrimSpace(label[len("executor:"):])
+			if !strings.EqualFold(labelExecutor, executor) {
+				return fmt.Errorf("issue #%d executor label %q does not match requesting executor %q", detail.Number, label, executor)
+			}
+		}
+	}
+	if !claimed {
+		return fmt.Errorf("issue #%d is not claimed; missing label %q", detail.Number, claimedLabel)
+	}
+	return nil
+}
+
+func readRepositoryFile(repo, path string) ([]byte, error) {
+	candidate := filepath.Clean(path)
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(repo, candidate)
+	}
+	repoPath, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository path: %w", err)
+	}
+	candidatePath, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return nil, err
+	}
+	relative, err := filepath.Rel(repoPath, candidatePath)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("path resolves outside repository: %s", candidatePath)
+	}
+	return os.ReadFile(candidatePath)
 }
 
 func cmdWorktree(ctx context.Context, args []string) error {
@@ -295,12 +503,13 @@ func cmdWorktree(ctx context.Context, args []string) error {
 func cmdValidate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
+	configPath := addConfigFlag(fs)
 	profile := fs.String("profile", "full", "smoke|full|release")
 	expected := fs.String("expected-head", "", "expected commit SHA")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.LoadFromRepo(*repo)
+	cfg, err := config.Load(*repo, *configPath)
 	if err != nil {
 		return err
 	}
@@ -367,12 +576,13 @@ func cmdFeedback(ctx context.Context, args []string) error {
 func cmdNotify(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("notify", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
+	configPath := addConfigFlag(fs)
 	event := fs.String("event", "manual", "event name")
 	message := fs.String("message", "", "message")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.LoadFromRepo(*repo)
+	cfg, err := config.Load(*repo, *configPath)
 	if err != nil {
 		return err
 	}
@@ -382,6 +592,10 @@ func cmdNotify(ctx context.Context, args []string) error {
 	}
 	emit(output{OK: true, Command: "notify", Data: result})
 	return nil
+}
+
+func addConfigFlag(fs *flag.FlagSet) *string {
+	return fs.String("config", "", "explicit config path; overrides .gia config discovery")
 }
 
 func emit(v output) {
@@ -400,6 +614,7 @@ Commands:
   issue      create or list structured GitHub issues
   scan       find executable agent issues
   claim      atomically claim an issue and prepare a branch
+  pr         request a Draft PR for user approval
   worktree   create/remove isolated validation worktrees
   validate   run smoke/full/release profile bound to a commit
   handoff    transfer single-writer ownership through PR metadata
@@ -425,7 +640,7 @@ func requestedHelp(args []string) ([]string, bool) {
 	if len(args) >= 2 && isHelpToken(args[1]) {
 		return args[:1], true
 	}
-	if len(args) >= 3 && (args[0] == "issue" || args[0] == "worktree") && isHelpToken(args[2]) {
+	if len(args) >= 3 && (args[0] == "issue" || args[0] == "pr" || args[0] == "worktree") && isHelpToken(args[2]) {
 		return args[:2], true
 	}
 	return nil, false
@@ -450,20 +665,22 @@ func showHelp(path []string) error {
 }
 
 var commandHelp = map[string]string{
-	"init":            "Usage: gia init [--repo <path>] [--force]\nInitialize .gia configuration and templates in a repository.\n",
-	"doctor":          "Usage: gia doctor [--repo <path>]\nCheck Git, GitHub CLI, Go, repository, authentication, and GIA configuration.\n",
+	"init":            "Usage: gia init [--repo <path>] [--format json|yaml|yml] [--force]\nInitialize exactly one .gia configuration and the templates in a repository.\n",
+	"doctor":          "Usage: gia doctor [--repo <path>] [--config <path>]\nCheck Git, GitHub CLI, Go, repository, authentication, configuration, and the permission-boundary reminder.\n",
 	"issue":           "Usage: gia issue create|list\nCreate a structured task Issue or list ready Issues.\n",
-	"issue create":    "Usage: gia issue create [--repo <path>] --direction <text> [--risk auto|low|medium|high] [--executor <name>] [--dry-run]\n",
-	"issue list":      "Usage: gia issue list [--repo <path>] [--limit <count>]\nList open Issues carrying the configured ready label.\n",
-	"scan":            "Usage: gia scan [--repo <path>] [--limit <count>]\nFind open Issues carrying the configured ready label.\n",
-	"claim":           "Usage: gia claim [--repo <path>] --issue <number> [--executor <name>]\n",
+	"issue create":    "Usage: gia issue create [--repo <path>] [--config <path>] --direction <text> [--risk auto|low|medium|high] [--executor <name>] [--dry-run]\n",
+	"issue list":      "Usage: gia issue list [--repo <path>] [--config <path>] [--limit <count>]\nList open Issues carrying the configured ready label.\n",
+	"scan":            "Usage: gia scan [--repo <path>] [--config <path>] [--limit <count>]\nFind open Issues carrying the configured ready label.\n",
+	"claim":           "Usage: gia claim [--repo <path>] [--config <path>] --issue <number> [--executor <name>]\n",
+	"pr":              "Usage: gia pr request\nRequest a Draft PR; approval, merge, and release remain external user operations.\n",
+	"pr request":      "Usage: gia pr request [--repo <path>] [--config <path>] --issue <number> [--title <text>] [--body-file <path>] [--executor <name>]\n",
 	"worktree":        "Usage: gia worktree create|remove\nCreate or safely remove an isolated validation worktree.\n",
 	"worktree create": "Usage: gia worktree create [--repo <path>] (--pr <number> | --ref <remote-ref>) [--root <path>]\n",
 	"worktree remove": "Usage: gia worktree remove [--repo <path>] --path <worktree-path> [--force]\n",
-	"validate":        "Usage: gia validate [--repo <path>] [--profile smoke|full|release] [--expected-head <sha>]\n",
+	"validate":        "Usage: gia validate [--repo <path>] [--config <path>] [--profile smoke|full|release] [--expected-head <sha>]\n",
 	"handoff":         "Usage: gia handoff [--repo <path>] --pr <number> --to <executor> --state <state> [--note <text>]\n",
 	"status":          "Usage: gia status [--repo <path>]\nShow branch, HEAD, cleanliness, and worktree state.\n",
 	"feedback":        "Usage: gia feedback [--repo <path>] [--category bug|improvement|ux|security] --message <text> [--pr <number>]\n",
-	"notify":          "Usage: gia notify [--repo <path>] [--event <name>] [--message <text>]\n",
+	"notify":          "Usage: gia notify [--repo <path>] [--config <path>] [--event <name>] [--message <text>]\n",
 	"version":         "Usage: gia version\nPrint the GIA Kit version.\n",
 }

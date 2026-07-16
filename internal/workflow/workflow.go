@@ -92,30 +92,55 @@ var runGitHubWithBodyFile = githubx.RunWithBodyFile
 var claimRunWithBodyFile = githubx.RunWithBodyFile
 
 func Initialize(repo string, force bool) error {
+	_, err := InitializeWithFormat(repo, "json", force)
+	return err
+}
+
+func InitializeWithFormat(repo, format string, force bool) (string, error) {
+	cfgPath, err := config.PathForFormat(repo, format)
+	if err != nil {
+		return "", err
+	}
+	existing, err := config.ExistingPaths(repo)
+	if err != nil {
+		return "", err
+	}
+	if len(existing) > 0 {
+		if !force {
+			return "", fmt.Errorf("GIA config already exists (%s); pass --force only to overwrite the same single format", strings.Join(existing, ", "))
+		}
+		if len(existing) != 1 || filepath.Clean(existing[0]) != filepath.Clean(cfgPath) {
+			return "", fmt.Errorf("refusing --force for %s while config files exist (%s); GIA will not delete or choose between formats, so keep only %s and retry", cfgPath, strings.Join(existing, ", "), cfgPath)
+		}
+	}
 	dir := filepath.Join(repo, ".gia")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	cfgPath := filepath.Join(dir, "config.json")
-	if _, err := os.Stat(cfgPath); err == nil && !force {
-		return fmt.Errorf("%s already exists; pass --force to overwrite", cfgPath)
+		return "", err
 	}
 	if err := config.Save(cfgPath, config.Default()); err != nil {
-		return err
+		return "", err
 	}
 	templates := map[string]string{
 		"issue.md":   "# Agent Task\n\nDescribe one optimization direction. GIA converts it into a controlled issue.\n",
 		"handoff.md": "<!-- GIA:HANDOFF:START -->\nexecutor: web-agent\nstate: WEB_OWNED\nhead_sha: <sha>\nnext_executor: local-agent\n<!-- GIA:HANDOFF:END -->\n",
 	}
 	tdir := filepath.Join(dir, "templates")
-	_ = os.MkdirAll(tdir, 0o755)
-	for n, c := range templates {
-		_ = os.WriteFile(filepath.Join(tdir, n), []byte(c), 0o644)
+	if err := os.MkdirAll(tdir, 0o755); err != nil {
+		return "", err
 	}
-	return nil
+	for n, c := range templates {
+		if err := os.WriteFile(filepath.Join(tdir, n), []byte(c), 0o644); err != nil {
+			return "", err
+		}
+	}
+	return cfgPath, nil
 }
 
 func Doctor(ctx context.Context, repo string) DoctorReport {
+	return DoctorWithConfig(ctx, repo, "")
+}
+
+func DoctorWithConfig(ctx context.Context, repo, configPath string) DoctorReport {
 	checks := []DoctorCheck{}
 	add := func(name string, err error, detail string) {
 		checks = append(checks, DoctorCheck{name, err == nil, detail})
@@ -128,8 +153,13 @@ func Doctor(ctx context.Context, repo string) DoctorReport {
 	add("go", err, "Go toolchain")
 	_, err = gitx.Run(ctx, repo, "rev-parse", "--is-inside-work-tree")
 	add("repository", err, repo)
-	_, err = config.LoadFromRepo(repo)
-	add("config", err, filepath.Join(repo, ".gia", "config.json"))
+	_, err = config.Load(repo, configPath)
+	configDetail := "auto-discover exactly one .gia/config.json, config.yaml, or config.yml"
+	if strings.TrimSpace(configPath) != "" {
+		configDetail = "explicit config: " + configPath
+	}
+	add("config", err, configDetail)
+	add("permission-boundary", nil, "GIA permissions are workflow policy; a separate GitHub App/token plus GitHub ruleset is the hard approval, merge, and release boundary")
 	_, err = run(ctx, repo, "gh", "auth", "status")
 	add("github-auth", err, "gh auth status")
 	ok := true

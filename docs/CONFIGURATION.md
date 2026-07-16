@@ -2,8 +2,33 @@
 
 配置位于目标仓库 `.gia/config.json`、`.gia/config.yaml` 或
 `.gia/config.yml`。三者必须恰好存在一个；同时存在多个格式时失败关闭，避免
-不同执行器读取到不同策略。`gia init` 当前仍生成 JSON，YAML 是等价的手工维护
-格式。
+不同执行器读取到不同策略。
+
+```text
+gia init --repo <path> --format json
+gia init --repo <path> --format yaml
+gia init --repo <path> --format yml
+```
+
+默认格式是 JSON。`--force` 只覆盖当前已存在的同格式单一配置；若存在另一格式
+或多个配置，GIA 拒绝处理并要求用户显式保留一个文件，不会自动删除或猜测优先级。
+
+需要临时或集中配置时，下列远程/安全命令支持 `--config <path>`：
+
+```text
+doctor
+issue create
+issue list
+scan
+claim
+pr request
+validate
+notify
+```
+
+显式路径优先于 `.gia` 自动发现，且相对路径按 `--repo` 指定的仓库解析。自动
+发现不合并不同格式。JSON 使用 `DisallowUnknownFields`，YAML/YML 使用
+`KnownFields(true)`，三种格式都拒绝 unknown fields 和多文档内容。
 
 YAML 解析使用 YAML 官方组织维护的
 [`go.yaml.in/yaml/v3`](https://pkg.go.dev/go.yaml.in/yaml/v3) v3.0.4，
@@ -71,6 +96,25 @@ permissions:
 GIA workflow policy，不能替代 GitHub 的硬权限隔离。生产接入必须为 Agent 使用
 独立 GitHub App 或最小权限 token，并通过 branch protection、environments 和
 required reviewers 实际限制批准、合并与发布权限。
+
+## Draft PR 申请
+
+```text
+gia pr request --repo <path> --issue <number> \
+  [--config <path>] [--title <text>] [--body-file <path>] \
+  [--executor <name>]
+```
+
+- base 来自 `defaultBranch`，head 来自当前分支；
+- 当前分支不得是 detached、default 或 `protected.branches`；
+- 仓库必须干净，本地 HEAD 必须等于 `<validation.remote>/<current-branch>` tip；
+- executor 必须匹配 `allowedExecutors`；
+- Issue 必须包含 `issue.claimedLabel`；已有 `executor:*` 标签必须匹配请求者；
+- 未提供标题或正文文件时读取 Issue 标题和正文；
+- `--body-file` 的真实路径必须位于目标仓库内，避免读取仓库外凭据或秘密；
+- 远端始终创建 Draft PR，成功状态固定为 `PENDING_USER_APPROVAL`。
+
+GIA 不提供 approve、merge 或 release 子命令。
 
 ## 安全默认值
 

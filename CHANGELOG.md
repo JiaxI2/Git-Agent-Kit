@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **feat**: 增加 `init --format json|yaml|yml`、严格 unknown-field 配置解析和
+  required commands 的显式 `--config` 加载。
+- **feat**: 增加 `gia pr request`，仅允许已认领且 executor 匹配的 Issue 在
+  clean、已推送且远端 SHA 一致的任务分支上申请 Draft PR。
+- **security**: 限制 Draft PR body file 必须解析到仓库内，并在 doctor 中明确
+  GitHub App/ruleset 才是审批、merge 和 release 的硬权限边界。
 - 增加 `gia help`、`gia --help`、主要命令帮助和 `gia issue list`。
 - 空 Issue 查询保留机器可读结果，并增加查询条件、原因与恢复建议。
 - `init` 输出增加 `.gia/` 提交或忽略的明确下一步。

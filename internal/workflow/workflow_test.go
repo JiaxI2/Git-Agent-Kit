@@ -27,6 +27,80 @@ func TestInitialize(t *testing.T) {
 		t.Fatal("expected overwrite refusal")
 	}
 }
+
+func TestInitializeWithFormatCreatesOneConfigAndFailsClosedOnAmbiguity(t *testing.T) {
+	for _, format := range []string{"json", "yaml", "yml"} {
+		t.Run(format, func(t *testing.T) {
+			repo := t.TempDir()
+			path, err := InitializeWithFormat(repo, format, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(repo, ".gia", "config."+format)
+			if path != want {
+				t.Fatalf("path=%q want=%q", path, want)
+			}
+			found, err := config.ExistingPaths(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(found) != 1 || found[0] != want {
+				t.Fatalf("found configs=%v", found)
+			}
+			if _, err := config.LoadFromRepo(repo); err != nil {
+				t.Fatalf("load initialized config: %v", err)
+			}
+			if _, err := InitializeWithFormat(repo, format, true); err != nil {
+				t.Fatalf("force same format: %v", err)
+			}
+			other := "yaml"
+			if format == "yaml" {
+				other = "json"
+			}
+			if _, err := InitializeWithFormat(repo, other, true); err == nil || !strings.Contains(err.Error(), "will not delete or choose") {
+				t.Fatalf("cross-format force error=%v", err)
+			}
+			if _, err := os.Stat(want); err != nil {
+				t.Fatalf("existing config was removed: %v", err)
+			}
+		})
+	}
+}
+
+func TestInitializeWithFormatRejectsMultipleExistingConfigsEvenWithForce(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".gia")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"config.json", "config.yml"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := InitializeWithFormat(repo, "json", true); err == nil || !strings.Contains(err.Error(), "will not delete or choose") {
+		t.Fatalf("ambiguous force error=%v", err)
+	}
+	for _, name := range []string{"config.json", "config.yml"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("%s was removed: %v", name, err)
+		}
+	}
+}
+
+func TestDoctorIncludesPermissionBoundaryGuidance(t *testing.T) {
+	report := Doctor(context.Background(), t.TempDir())
+	for _, check := range report.Checks {
+		if check.Name == "permission-boundary" {
+			if !check.OK || !strings.Contains(check.Detail, "GitHub App") || !strings.Contains(check.Detail, "ruleset") {
+				t.Fatalf("permission boundary check=%+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("permission-boundary guidance missing")
+}
+
 func TestDefaultConfigHasProfiles(t *testing.T) {
 	c := config.Default()
 	for _, p := range []string{"smoke", "full", "release"} {

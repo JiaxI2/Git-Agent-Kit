@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -93,6 +95,20 @@ func (c Config) ValidationRemote() string {
 	return remote
 }
 
+func (c Config) ExecutorAllowed(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for _, allowed := range c.Permissions.AllowedExecutors {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "*" || strings.EqualFold(allowed, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func MatchAny(patterns []string, value string) bool {
 	value = normalizePolicyPath(value)
 	for _, pattern := range patterns {
@@ -143,14 +159,41 @@ func normalizePolicyPath(value string) string {
 }
 
 func LoadFromRepo(repo string) (Config, error) {
-	configDir := filepath.Join(repo, ".gia")
-	candidates := []string{
-		filepath.Join(configDir, "config.json"),
-		filepath.Join(configDir, "config.yaml"),
-		filepath.Join(configDir, "config.yml"),
+	found, err := ExistingPaths(repo)
+	if err != nil {
+		return Config{}, err
 	}
+	if len(found) == 0 {
+		candidates := configCandidates(repo)
+		return Config{}, fmt.Errorf("no GIA config found; expected exactly one of %s; run 'gia init --repo %s'", strings.Join(candidates, ", "), repo)
+	}
+	if len(found) != 1 {
+		return Config{}, fmt.Errorf("multiple GIA configs found (%s); keep exactly one of config.json, config.yaml, or config.yml", strings.Join(found, ", "))
+	}
+	return loadPath(found[0])
+}
+
+func Load(repo, explicitPath string) (Config, error) {
+	if strings.TrimSpace(explicitPath) != "" {
+		return LoadExplicit(repo, explicitPath)
+	}
+	return LoadFromRepo(repo)
+}
+
+func LoadExplicit(repo, path string) (Config, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return Config{}, fmt.Errorf("explicit config path is empty")
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repo, path)
+	}
+	return loadPath(filepath.Clean(path))
+}
+
+func ExistingPaths(repo string) ([]string, error) {
 	var found []string
-	for _, candidate := range candidates {
+	for _, candidate := range configCandidates(repo) {
 		_, err := os.Stat(candidate)
 		switch {
 		case err == nil:
@@ -158,16 +201,40 @@ func LoadFromRepo(repo string) (Config, error) {
 		case os.IsNotExist(err):
 			continue
 		default:
-			return Config{}, fmt.Errorf("inspect %s: %w", candidate, err)
+			return nil, fmt.Errorf("inspect %s: %w", candidate, err)
 		}
 	}
-	if len(found) == 0 {
-		return Config{}, fmt.Errorf("no GIA config found; expected exactly one of %s; run 'gia init --repo %s'", strings.Join(candidates, ", "), repo)
+	return found, nil
+}
+
+func PathForFormat(repo, format string) (string, error) {
+	normalized, err := NormalizeFormat(format)
+	if err != nil {
+		return "", err
 	}
-	if len(found) != 1 {
-		return Config{}, fmt.Errorf("multiple GIA configs found (%s); keep exactly one of config.json, config.yaml, or config.yml", strings.Join(found, ", "))
+	return filepath.Join(repo, ".gia", "config."+normalized), nil
+}
+
+func NormalizeFormat(format string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(format, ".")))
+	switch normalized {
+	case "json", "yaml", "yml":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("unsupported config format %q; use json, yaml, or yml", format)
 	}
-	path := found[0]
+}
+
+func configCandidates(repo string) []string {
+	configDir := filepath.Join(repo, ".gia")
+	return []string{
+		filepath.Join(configDir, "config.json"),
+		filepath.Join(configDir, "config.yaml"),
+		filepath.Join(configDir, "config.yml"),
+	}
+}
+
+func loadPath(path string) (Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read %s: %w", path, err)
@@ -175,9 +242,13 @@ func LoadFromRepo(repo string) (Config, error) {
 	var cfg Config
 	switch filepath.Ext(path) {
 	case ".json":
-		err = json.Unmarshal(b, &cfg)
+		decoder := json.NewDecoder(bytes.NewReader(b))
+		decoder.DisallowUnknownFields()
+		err = decodeOne(decoder.Decode, &cfg)
 	case ".yaml", ".yml":
-		err = yaml.Unmarshal(b, &cfg)
+		decoder := yaml.NewDecoder(bytes.NewReader(b))
+		decoder.KnownFields(true)
+		err = decodeOne(decoder.Decode, &cfg)
 	default:
 		err = fmt.Errorf("unsupported config extension %q", filepath.Ext(path))
 	}
@@ -186,6 +257,21 @@ func LoadFromRepo(repo string) (Config, error) {
 	}
 	applyPermissionDefaults(&cfg.Permissions)
 	return cfg, nil
+}
+
+func decodeOne(decode func(interface{}) error, target interface{}) error {
+	if err := decode(target); err != nil {
+		return err
+	}
+	var extra interface{}
+	switch err := decode(&extra); {
+	case err == io.EOF:
+		return nil
+	case err != nil:
+		return err
+	default:
+		return fmt.Errorf("multiple configuration documents are not allowed")
+	}
 }
 
 func defaultPermissions() PermissionConfig {
@@ -214,10 +300,23 @@ func applyPermissionDefaults(permissions *PermissionConfig) {
 }
 
 func Save(path string, cfg Config) error {
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	var (
+		b   []byte
+		err error
+	)
+	switch filepath.Ext(path) {
+	case ".json":
+		b, err = json.MarshalIndent(cfg, "", "  ")
+	case ".yaml", ".yml":
+		b, err = yaml.Marshal(cfg)
+	default:
+		return fmt.Errorf("unsupported config extension %q", filepath.Ext(path))
+	}
 	if err != nil {
 		return err
 	}
-	b = append(b, '\n')
+	if len(b) == 0 || b[len(b)-1] != '\n' {
+		b = append(b, '\n')
+	}
 	return os.WriteFile(path, b, 0o644)
 }

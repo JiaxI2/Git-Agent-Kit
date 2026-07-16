@@ -20,6 +20,7 @@
 $env:PATH = "$(Resolve-Path .\bin);$env:PATH"
 gia help
 gia init --repo C:\path\to\repo
+# 或：gia init --repo C:\path\to\repo --format yaml
 gia doctor --repo C:\path\to\repo
 ```
 
@@ -30,6 +31,7 @@ gia doctor --repo C:\path\to\repo
 export PATH="$(pwd)/bin:$PATH"
 gia help
 gia init --repo /path/to/repo
+# or: gia init --repo /path/to/repo --format yaml
 gia doctor --repo /path/to/repo
 ```
 
@@ -39,7 +41,9 @@ gia doctor --repo /path/to/repo
 gh auth login
 ```
 
-`init` 成功后会明确列出下一步：检查 `.gia/config.json`，然后选择将 `.gia/` 提交给团队，或将其加入目标仓库的 `.gitignore`；随后运行 `doctor`。
+`init` 默认生成 `.gia/config.json`，也可通过 `--format yaml|yml` 选择
+对应格式。成功后会明确列出下一步：检查实际配置文件，然后选择将 `.gia/`
+提交给团队，或将其加入目标仓库的 `.gitignore`；随后运行 `doctor`。
 
 ## 傻瓜式使用
 
@@ -62,9 +66,17 @@ Agent 获取任务：
 gia issue list --repo F:\Project\Demo
 gia scan --repo F:\Project\Demo
 gia claim --repo F:\Project\Demo --issue 123 --executor web-agent
+gia pr request --repo F:\Project\Demo --issue 123 --executor web-agent
 ```
 
-`issue list` 与 `scan` 都查询打开且带有 `.gia/config.json` 中 `issue.readyLabel` 的 Issue。若结果为空，JSON 输出仍保留 `data: []`，并在 `guidance` 中给出实际查询条件、常见原因和恢复建议。
+`issue list` 与 `scan` 都查询打开且带有生效配置中 `issue.readyLabel` 的
+Issue。若结果为空，JSON 输出仍保留 `data: []`，并在 `guidance` 中给出实际
+查询条件、常见原因和恢复建议。
+
+`pr request` 仅为已认领 Issue 创建 Draft PR。它要求当前任务分支已推送、
+本地 HEAD 等于远端分支 tip、仓库干净、executor 被允许，并返回
+`PENDING_USER_APPROVAL`。审批、merge、Tag 和 Release 仍由用户在 GitHub
+规则保护下完成。
 
 本地 Codex 隔离验证：
 
@@ -91,12 +103,13 @@ gia feedback --repo F:\Project\Demo --category ux --message "worktree 路径提�
 | 命令 | 用途 |
 |---|---|
 | `help` / `--help` | 查看顶层或指定命令帮助 |
-| `init` | 在目标仓库生成 `.gia/config.json` |
+| `init` | 在目标仓库生成单一 `.gia/config.json|yaml|yml` |
 | `doctor` | 检查 Git、GitHub CLI、Go、认证和配置 |
 | `issue create` | 从一句优化方向创建结构化 Issue |
 | `issue list` | 列出打开且带有 ready 标签的 Issue |
 | `scan` | 查找 `agent:ready` Issue |
 | `claim` | 认领 Issue、创建并推送独立分支、更新标签 |
+| `pr request` | 为已认领 Issue 申请 Draft PR，等待用户审批 |
 | `worktree create/remove` | 创建或安全移除隔离验证目录 |
 | `validate` | 运行绑定 SHA 的 smoke/full/release 验证 |
 | `handoff` | 在 PR 评论写入可审计交接块 |
@@ -124,13 +137,18 @@ gh workflow run gia-agent-dispatch.yml -f issue_number=123
 
 ## 配置
 
-初始化后编辑目标仓库的 `.gia/config.json`：
+初始化后编辑目标仓库中唯一的 `.gia/config.json`、`config.yaml` 或
+`config.yml`：
 
 - 自定义分支规则；
 - 自定义 smoke/full/release 命令；
 - 定义保护路径；
 - 配置通知 Webhook 或命令；
 - 决定是否允许自动认领。
+
+`issue`、`scan`、`claim`、`pr request`、`validate`、`notify` 和 `doctor`
+支持 `--config <path>` 显式选择配置；显式路径优先于 `.gia` 自动发现。解析会
+拒绝 unknown fields，避免拼写错误导致策略静默失效。
 
 详见 [配置说明](docs/CONFIGURATION.md)。
 
@@ -144,4 +162,6 @@ gh workflow run gia-agent-dispatch.yml -f issue_number=123
 - GIA 不存储 GitHub Token，复用 `gh` 的认证。
 - GIA 不自动合并、打 Tag 或发布 Release。
 - GIA 不绕过 GitHub 分支保护。
+- `permissions` 只表达 workflow policy；用户与 Agent 的硬身份边界必须由
+  独立 GitHub App/token 和 ruleset 建立。同一 `gh` 用户身份不能充当该边界。
 - 默认配置的验证命令是 Go 仓库示例，目标项目应按技术栈调整。
