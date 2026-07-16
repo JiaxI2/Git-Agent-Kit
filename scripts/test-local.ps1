@@ -85,7 +85,7 @@ try {
   if ($LASTEXITCODE -eq 0) { throw 'expected dirty worktree refusal' }
   Remove-GiaTestPath -Path (Join-Path $Wt 'dirty.txt') -TemporaryRoot $Tmp -WhatIf:$WhatIfPreference
   & "$Root\bin\gia.exe" worktree remove --repo $Repo --path $Wt | Out-Null
-  Write-Host 'local integration test passed'
+  Write-Output 'local integration test passed'
 } finally {
   Remove-GiaTestPath -Path $Tmp -TemporaryRoot $TemporaryRoot -Recurse -WhatIf:$WhatIfPreference
 }
