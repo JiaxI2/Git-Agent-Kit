@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "defaultBranch": "main",
+  "issue": {
+    "readyLabel": "agent:ready",
+    "claimedLabel": "agent:claimed",
+    "completedLabel": "agent:completed",
+    "autoCreate": true,
+    "autoClaim": false
+  },
+  "branches": {
+    "pattern": "agent/{executor}/{type}/{issue}-{slug}",
+    "allowedTypes": ["feat", "fix", "docs", "refactor", "test", "chore", "perf", "ci", "build"]
+  },
+  "worktrees": {
+    "root": "../.gia-worktrees",
+    "refuseDirtyRemoval": true
+  },
+  "validation": {
+    "profiles": {
+      "smoke": ["git diff --check", "go test ./..."],
+      "full": ["git diff --check", "go test ./...", "go vet ./..."],
+      "release": ["git diff --check", "go test ./...", "go vet ./..."]
+    },
+    "requireClean": true,
+    "requireExpectedHead": true
+  },
+  "protected": {
+    "branches": ["main", "master", "release/*"],
+    "paths": [".github/workflows/**", ".gitmodules", "**/go.mod", "**/package-lock.json"],
+    "rejectForcePush": true
+  },
+  "notifications": {
+    "console": true,
+    "webhookUrl": "",
+    "command": []
+  }
+}

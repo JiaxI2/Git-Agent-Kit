@@ -1,0 +1,16 @@
+# Local development output
+bin/gia.exe
+*.test
+coverage.out
+coverage-*.out
+
+# Repository-local runtime state
+.gia/
+.gia-worktrees/
+.agentpatch/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

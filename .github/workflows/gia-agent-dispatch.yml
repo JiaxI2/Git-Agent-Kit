@@ -1,0 +1,38 @@
+name: GIA Agent Dispatch
+
+on:
+  issues:
+    types: [opened, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  classify:
+    if: contains(github.event.issue.labels.*.name, 'agent:ready')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guardrail summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const highRiskWords = /release|secret|token|permission|workflow|submodule|删除|发布|权限|密钥/i;
+            const high = highRiskWords.test(`${issue.title}\n${issue.body || ''}`);
+            const labels = issue.labels.map(x => x.name);
+            if (!labels.some(x => x.startsWith('risk:'))) {
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: issue.number,
+                labels: [high ? 'risk:high' : 'risk:low']
+              });
+            }
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issue.number,
+              body: high
+                ? 'GIA 已识别为高风险任务。需要人工批准后才允许 Agent 认领；本工作流不会执行 Issue 正文中的任何命令。'
+                : 'GIA 已完成低风险初步分类。执行器可通过受控 claim 流程认领；本工作流不会执行 Issue 正文中的任何命令。'
+            });

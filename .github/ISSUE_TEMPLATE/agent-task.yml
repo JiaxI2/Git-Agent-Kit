@@ -1,0 +1,25 @@
+name: Agent 隔离开发任务
+description: 提供一个优化方向，由 GIA/Agent 转换为受控任务
+title: "[Agent] "
+labels: ["agent:ready"]
+body:
+  - type: textarea
+    id: direction
+    attributes:
+      label: 优化方向
+      description: 只需描述希望优化、修复或实现什么。
+      placeholder: 例如：收敛安装和升级流程，减少重复脚本并提升失败恢复能力。
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: 预估风险
+      options: [自动判断, 低, 中, 高]
+      default: 0
+  - type: dropdown
+    id: executor
+    attributes:
+      label: 首选执行器
+      options: [web-agent, local-agent, human]
+      default: 0
