@@ -49,6 +49,67 @@ func TestUnknownHelpTopicFails(t *testing.T) {
 	}
 }
 
+func TestExecuteEmitsOneStructuredFailureDocument(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".gia"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(filepath.Join(repo, ".gia", "config.json"), config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() error {
+		if code := execute(context.Background(), []string{"validate", "--repo", repo}); code != 1 {
+			t.Fatalf("exit code=%d, want 1", code)
+		}
+		return nil
+	})
+	decoder := json.NewDecoder(strings.NewReader(out))
+	var result output
+	if err := decoder.Decode(&result); err != nil {
+		t.Fatalf("decode failure output: %v\n%s", err, out)
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		t.Fatalf("failure output contains more than one JSON document: %v\n%s", err, out)
+	}
+	if result.OK || result.Command != "validate" || result.Error == "" || result.Data == nil {
+		t.Fatalf("failure output=%+v", result)
+	}
+}
+
+func TestExecuteAddsCommandToUnreportedFailure(t *testing.T) {
+	out := captureStdout(t, func() error {
+		if code := execute(context.Background(), []string{"pr", "missing"}); code != 1 {
+			t.Fatalf("exit code=%d, want 1", code)
+		}
+		return nil
+	})
+	var result output
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("decode failure output: %v\n%s", err, out)
+	}
+	if result.Command != "pr missing" || result.Error == "" {
+		t.Fatalf("failure output=%+v", result)
+	}
+}
+
+func TestEmitDoesNotEscapeHTML(t *testing.T) {
+	out := captureStdout(t, func() error {
+		emit(output{OK: false, Command: "test", Error: "<unsafe>&"})
+		return nil
+	})
+	if strings.Contains(out, `\u003c`) || strings.Contains(out, `\u003e`) || strings.Contains(out, `\u0026`) {
+		t.Fatalf("HTML characters were escaped: %s", out)
+	}
+	var result output
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "<unsafe>&" {
+		t.Fatalf("error=%q", result.Error)
+	}
+}
+
 func TestIssueListOutputPreservesItemsAndAddsEmptyGuidance(t *testing.T) {
 	cfg := config.Default()
 	items := []issue.Item{}
@@ -195,6 +256,32 @@ func TestRequiredCommandsAcceptExplicitConfigFlag(t *testing.T) {
 				t.Fatalf("--config was not registered: %v", err)
 			}
 		})
+	}
+}
+
+func TestNotifyKeepsStdoutMachineReadable(t *testing.T) {
+	repo := t.TempDir()
+	cfg := config.Default()
+	cfg.Notifications.Console = true
+	if err := os.MkdirAll(filepath.Join(repo, ".gia"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(filepath.Join(repo, ".gia", "config.json"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() error {
+		return cmdNotify(context.Background(), []string{
+			"--repo", repo,
+			"--event", "ready",
+			"--message", "work now",
+		})
+	})
+	var result output
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("notify stdout is not one JSON document: %v\n%s", err, out)
+	}
+	if !result.OK || result.Command != "notify" {
+		t.Fatalf("notify output=%+v", result)
 	}
 }
 

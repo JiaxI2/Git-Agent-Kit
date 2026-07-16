@@ -1,7 +1,11 @@
-.PHONY: build test integration fmt vet package
+.PHONY: build test integration fmt vet
+
+VERSION ?= $(shell cat VERSION)
+LDFLAGS := -s -w -X main.version=$(VERSION)
+
 build:
 	mkdir -p bin
-	go build -o bin/gia ./cmd/gia
+	go build -trimpath -buildvcs=true -ldflags "$(LDFLAGS)" -o bin/gia ./cmd/gia
 
 test:
 	go test ./...
@@ -14,6 +18,3 @@ fmt:
 
 vet:
 	go vet ./...
-
-package: test vet build
-	zip -r git-isolated-agent-kit.zip . -x '.git/*' 'git-isolated-agent-kit.zip'

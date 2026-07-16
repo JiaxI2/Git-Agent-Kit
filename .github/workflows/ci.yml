@@ -1,18 +1,44 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+  pull_request:
+
 permissions:
   contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version: '1.22.12'
+          cache-dependency-path: go.sum
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        shell: bash
+        run: test -z "$(gofmt -l ./cmd ./internal)"
       - run: go test ./...
+      - name: Race tests
+        if: runner.os == 'Linux'
+        run: go test -race ./...
       - run: go vet ./...
-      - run: go build -o bin/gia${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/gia
+      - name: Build and verify version
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          $binary = Join-Path $PWD "bin/gia$suffix"
+          go build -trimpath -buildvcs=true -ldflags "-s -w -X main.version=$version" -o $binary ./cmd/gia
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = ((& $binary version) -join "`n") | ConvertFrom-Json
+          if (-not $result.ok -or $result.data.version -ne $version) {
+            throw "version mismatch: expected $version"
+          }
+      - run: git diff --check

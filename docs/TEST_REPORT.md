@@ -1,37 +1,40 @@
-# GIA Kit 0.1.0 多智能体验证报告
+# GIA Kit 0.1.0 最终多智能体验证报告
 
 执行日期：2026-07-16
 
-总体结论：**未达到正式集成或发布准入条件**。T0/T1 本地核心隔离能力通过；T2 真实 GitHub、T3 对抗测试和 T4 用户体验暴露多项阻塞缺陷。
+总体结论：**PASS，达到 Standalone GIA Kit 候选发布准入**。T0 静态与构建、
+T1 本地隔离、T2 真实 GitHub、T3 对抗测试和 T4 用户体验全部通过。
 
 ## 测试方法
 
-- T2、T3、T4 由三个独立智能体并行执行，主线程负责权限边界、证据回读和清理。
-- T2/T4 使用 `JiaxI2` 账号下的专用私有临时仓库；证据回读后已删除。
-- T3 使用本地 bare remote 和进程级认证隔离，不修改全局 GitHub 凭据。
-- 未 merge、未 Tag、未 Release、未 force push，也未修改 AiCoding、Codex-Skills 或 GIA 源文件。
+- T2、T3、T4 由独立智能体并行执行，主线程负责权限边界、证据回读、
+  缺陷修复复核和最终清理。
+- T2/T4 使用 `JiaxI2` 账号下的专用私有临时仓库；T3 使用本地 bare remote、
+  进程级认证隔离和受控 fake `gh`。
+- 每个阻塞缺陷修复后重新执行对应全量或 targeted 场景，不以单元测试替代
+  真实 GitHub、Git ref 和用户路径验证。
+- 未 approve、未 merge、未 Tag、未 Release、未 force push，也未修改
+  任何上层集成仓库或外部 capability source。
 
 ## T0 静态与单元测试
 
-结果：**PASS_WITH_GAPS**
+结果：**PASS**
 
-- `gofmt`：通过，10 个 Go 文件无格式漂移。
+- `gofmt`：通过，目标 Go 文件无格式漂移。
 - `go test ./...`：通过。
 - `go test -race ./...`：通过。
 - `go vet ./...`：通过。
 - Linux amd64 构建：通过。
 - Windows amd64 构建：通过。
-- 发布二进制 SHA-256：与 `SHA256SUMS` 一致。
-- 单元测试覆盖率偏低：
-  - `internal/issue`：23.8%；
-  - `internal/validate`：6.2%；
-  - `internal/workflow`：11.2%；
-  - CLI、config、gitx、notify：0%。
-- Go module 已绑定 canonical 身份 `github.com/JiaxI2/git-isolated-agent-kit`；发布前仍需完成真实 T2/T3/T4 回归并确认 Tag/Release 证据。
+- Go module 已绑定 canonical 身份
+  `github.com/JiaxI2/git-isolated-agent-kit`。
+- canonical GitHub CI 的 Windows/Linux matrix 通过。
+- 最终 T2/T3 验证候选 binary SHA-256：
+  `CFB9153DABA85EB71D654860E33E6CABB1C0099EFD03EF0635A9BB0B4C65FE0E`。
 
 ## T1 本地沙箱集成
 
-结果：**PASS_WITH_GAP**
+结果：**PASS**
 
 已验证：
 
@@ -45,103 +48,108 @@
 - clean worktree 可正常移除；
 - 所有测试临时目录均已清理。
 
-PowerShell AST 与 PSScriptAnalyzer 通过，但 Safety gate 失败：
-
-- `scripts/test-local.ps1:34` 删除测试脏文件时缺少 `ShouldProcess`、`-WhatIf` 或明确的安全封装；
-- `scripts/test-local.ps1:38` 递归删除测试临时目录时缺少同类保护。
+PowerShell AST、PSScriptAnalyzer 和 Safety gate 全部通过。Windows 清理逻辑
+会先解析临时根绝对路径、拒绝越界目标，并通过 `ShouldProcess` 支持安全预览。
 
 ## T2 真实 GitHub 端到端测试
 
-结果：**FAIL**
+结果：**PASS**
 
-临时仓库：
+最终验证使用包含 CRLF、LF、中文 `Ω` 和 `rm -rf` 文本的多行 direction。
 
-- `JiaxI2/gia-kit-t2-20260716-202052`，测试完成后已删除；
-- Issue `#1`；
-- Draft PR `#2`；
-- 成功的 Issue dispatch run：`29497940187`；
-- 被跳过的 workflow dispatch run：`29498059002`。
+已验证：
 
-通过或部分通过：
+- `issue create` 成功，title 折叠为单行，body 原样保留 CRLF/LF 边界和全部
+  结构化章节；
+- lifecycle、`risk:low`、`executor:web-agent` labels 自动 bootstrap 并附加；
+- opened/labeled 并发事件结束后只有一条
+  `<!-- GIA:CLASSIFICATION -->` 评论，内容与现有 risk label 一致；
+- manual ready dispatch 成功，分类评论仍恰好一条；
+- `issue list` 和 `scan` 均返回 ready Issue；
+- 首次 claim 创建 `gia/claims/<issue>` 原子租约和任务分支，重复 claim
+  失败关闭；
+- claim 评论、Draft PR body 和 handoff metadata 多行内容完整；
+- `gia pr request` 只创建 Open/Draft PR，并返回
+  `PENDING_USER_APPROVAL`；
+- task branch 普通文件 commit/push、验证 worktree 和稳定工作区隔离正确；
+- 当前 upstream SHA 的 full validation 通过；
+- PR head 前移后，旧 SHA 即使仍存在于其他 archive ref 也被拒绝；
+- validation worktree fast-forward 后，新 SHA full validation 通过；
+- 最新 task push 和 Draft PR 的 Ubuntu/Windows CI 全部通过；
+- 稳定工作区始终保持 `main`、clean。
 
-- 私有测试仓库、默认分支和 GIA 配置创建成功；
-- `gia doctor` 的 Git、GitHub CLI、Go、仓库、配置和认证检查通过；
-- 手工创建 labels 后，`scan` 能发现 `agent:ready` Issue；
-- Issue dispatch 能完成低风险分类并写入安全评论；
-- `claim` 能创建并推送独立任务分支；
-- Draft PR 保持 Open/Draft；
-- `status` 能确认稳定仓库仍位于 `main` 且保持 clean。
+历史 Actions run IDs：
 
-失败与缺陷：
+- Issue classification：`29503281411`、`29503281957`、`29503282321`、
+  `29503282454`；
+- manual ready dispatch：`29503348525`；
+- final task push CI：`29503541374`；
+- final Draft PR CI：`29503545631`。
 
-1. `issue create` 返回成功，但 Issue 正文只剩 `## 背景与方向`，多行结构化正文被截断。
-2. `issue create` 未添加 `agent:ready`、`risk:*`、`executor:*` labels，首次 `scan` 返回空结果，opened dispatch 被跳过。
-3. claim 评论只保留 `GIA claimed this task.` 首行。
-4. handoff 评论只保留 `<!-- GIA:HANDOFF:START -->`，SHA、状态和执行器审计信息全部丢失。
-5. `gia issue list` 未实现。
-6. workflow 声明 `workflow_dispatch`，但 job 依赖 `github.event.issue.labels`，手工 dispatch 恒定 skipped。
+最终远程测试仓库在证据回读后已删除。
 
 ## T3 对抗与失败关闭测试
 
-结果：**13 PASS / 3 FAIL**
+结果：**PASS，35/35**
 
-通过：
+全量黑盒覆盖：
 
-- 恶意 Issue 中的 shell、PowerShell 删除命令和提示注入未被执行；
-- 错误或缺失 expected HEAD 被拒绝；
-- dirty repository 和 dirty worktree 被拒绝；
-- 无效 remote、缺失/无效 GitHub 认证、远端 non-fast-forward 冲突均失败关闭；
-- detached HEAD 被状态输出明确暴露；
-- 子模块 HEAD 漂移使仓库变 dirty，并被 validation 拒绝；
-- 高风险方向关键词可将 risk 推断为 `high`。
+- Issue 中的 shell、PowerShell 删除命令和提示注入不会被执行；
+- 重复/并发 claim、claimed label 冲突和远端 lease 冲突失败关闭；
+- GitHub label/comment 写入错误完整传播，部分写入执行补偿；
+- executor permissions、approval/merge/release principals 生效；
+- dirty repository、dirty worktree、detached HEAD、子模块漂移被拒绝或明确暴露；
+- 无效 remote、离线、缺失/无效认证、non-fast-forward 冲突失败关闭；
+- `protected.branches`、`protected.paths` 和 force-push policy 进入运行时门禁；
+- 未推送 commit、过期 SHA、错误 remote ref 和歧义 SHA 被拒绝。
 
-失败与缺陷：
+发布候选 targeted 4/4：
 
-1. 同一 Issue 重复 claim 仍可成功；单写者所有权没有基于 Issue 状态或 label 的原子校验。
-2. `gh issue edit` 或 `gh issue comment` 失败时，错误被丢弃，命令仍返回 `CLAIMED` 成功。
-3. clean 但未推送的 commit 可以通过 validation；没有验证目标 SHA 是否存在于远端或可从 PR ref 到达。
+1. upstream tip 精确匹配时验证通过；
+2. upstream 前移后，旧 SHA 即使仍为 archive ref tip 也被拒绝；
+3. 无 upstream 且多个 remote refs 指向同一 SHA 时按歧义拒绝；
+4. `gia worktree create` 自动配置 upstream 后，smoke/full 均通过。
 
-附加代码审查发现：`protected.paths` 和 `rejectForcePush` 当前只存在于配置模型，没有运行时使用点，尚不能形成真正的 protected-path 门禁。
+所有 local bare remote、fake `gh`、认证隔离目录和 worktree 已清理。
 
 ## T4 用户体验测试
 
-结果：**PARTIAL / NOT ACCEPTED**
-
-临时仓库 `JiaxI2/gia-kit-t4-20260716-202216`，测试完成后已删除。
+结果：**ACCEPTED / PASS**
 
 量化结果：
 
-- 主流程使用 7 条 GIA 命令；
-- 主流程耗时 118.2 秒；
-- 含证据复核和清理共 200.1 秒；
-- 三个用户目标中 2 个部分或完全成功；
-- 需要 4 次人工决策，其中 2 次属于意外恢复操作。
+- 核心用户目标：3/3；
+- 成功率：100%；
+- 意外恢复操作：0；
+- 首次完整路径：约 4 分 15.6 秒；
+- GIA 命令：17 条；
+- 用户决策：9 个，均为预期的配置、分支、提交或审批边界决策。
 
-主要体验问题：
+已验证体验：
 
-1. P1：Issue 创建报告成功但没有 labels，导致核心 `Issue -> scan` 路径失败。
-2. P1：结构化 Issue 正文被截断，用户无法获得预期的目标、非目标、验收和回滚说明。
-3. P2：README 在 Windows 示例中混用 `.\bin\gia.exe` 和未加入 PATH 的 `gia`。
-4. P2：`scan` 返回 `[]` 时没有查询条件、原因或修复建议。
-5. P2：`init` 创建未跟踪 `.gia/` 后仓库立即显示 dirty，但没有提交配置或下一步提示。
-6. P3：`--help` 和 `help` 均失败，只有无参数调用显示顶层命令列表。
+- `gia help`、`gia --help` 和主要子命令帮助可用；
+- Windows/Linux PATH 快速开始一致；
+- `init` 支持 JSON/YAML/YML，并明确提示 `.gia/` 提交或忽略的下一步；
+- `issue list`/`scan` 空结果保留 `data: []` 并提供 guidance；
+- claim 后的任务分支、commit/push、Draft PR、handoff、validate 和 status
+  路径可由首次使用者完成；
+- 所有审批、merge、Tag 和 Release 决策保持在用户边界。
 
-## 阻塞缺陷
+最终远程 UX 测试仓库在证据回读后已删除。
 
-正式集成前至少需要解决：
+## 发布准入
 
-1. Windows 多行参数安全传递，保证 Issue/评论/handoff 内容完整。
-2. label bootstrap 或原子失败策略，禁止创建无标签任务后报告成功。
-3. claim 原子所有权校验，并传播所有 GitHub 元数据错误。
-4. validation 增加远端 SHA/PR ref 可达性检查。
-5. 让 `protected.paths`、受保护分支和 force-push 拒绝配置真正进入运行时门禁。
-6. 修复 `workflow_dispatch` 条件或移除不可执行入口。
-7. 修复 PowerShell 测试脚本 Safety gate。
-8. 补齐 CLI/config/gitx/notify 和远程流程测试覆盖率。
-9. canonical module 身份已改为 `github.com/JiaxI2/git-isolated-agent-kit`；仍需建立远端仓库、Tag 和 Release，确保测试证据可追溯。
+首轮报告中的所有阻塞缺陷均已关闭并有代码、单元测试、全量或 targeted
+黑盒证据。Standalone GIA Kit 已达到候选发布准入：
+
+- T0/T1/T2/T3/T4 全部 PASS；
+- canonical repository、module identity 和远端 CI 可追溯；
+- 最终候选不执行 approve、merge、Tag 或 Release；
+- 下游 lifecycle 接入属于上层集成任务，不反向改变 GIA 平台中立边界。
 
 ## 清理结果
 
-- T2/T4 私有远程测试仓库已删除并确认不再存在。
-- T3 本地 bare remote、认证隔离目录和所有沙箱已清理。
-- 本轮构建和测试产生的临时二进制、worktree 和 `%TEMP%\gia-test-*` 已清理。
+- T2/T4 所有私有远程测试仓库已删除并确认不再存在。
+- T3 本地 bare remote、fake `gh`、认证隔离目录和所有沙箱已清理。
+- 构建和测试产生的临时 binary、worktree、缓存和 `%TEMP%\gia-*` 已清理。
+- 测试期间未 approve、未 merge、未 Tag、未 Release、未 force push。

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ type Result struct {
 func Send(ctx context.Context, event, message string, cfg config.NotificationConfig) (Result, error) {
 	r := Result{}
 	if cfg.Console {
-		fmt.Printf("[%s] %s\n", event, message)
+		fmt.Fprintf(os.Stderr, "[%s] %s\n", event, message)
 		r.Console = true
 	}
 	if cfg.WebhookURL != "" {

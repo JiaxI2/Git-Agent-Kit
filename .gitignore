@@ -1,5 +1,7 @@
 # Local development output
+bin/gia
 bin/gia.exe
+dist/
 *.test
 coverage.out
 coverage-*.out

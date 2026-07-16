@@ -70,8 +70,19 @@ Agent 获取任务：
 gia issue list --repo F:\Project\Demo
 gia scan --repo F:\Project\Demo
 gia claim --repo F:\Project\Demo --issue 123 --executor web-agent
+git switch agent/web-agent/feat/123-issue-123
+# 编辑任务文件后：
+git status --short
+git add path/to/changed-file
+git commit -m "fix(scope): complete issue 123"
+git push
 gia pr request --repo F:\Project\Demo --issue 123 --executor web-agent
 ```
+
+`claim` 会创建并推送任务分支，但不会替你切换当前工作区。复制 claim JSON 中
+的 `branch` 值并执行 `git switch`，完成编辑、commit 和 push 后，再申请
+Draft PR。若稳定工作区必须始终停留在 `main`，请在专用任务 clone 或
+`git worktree` 中执行上述 switch/edit/commit/push 步骤。
 
 `issue list` 与 `scan` 都查询打开且带有生效配置中 `issue.readyLabel` 的
 Issue。若结果为空，JSON 输出仍保留 `data: []`，并在 `guidance` 中给出实际
@@ -158,7 +169,9 @@ gh workflow run gia-agent-dispatch.yml -f issue_number=123
 
 ## 测试与持续迭代
 
-详见 [测试方案](docs/TEST_PLAN.md) 和 [对抗式威胁模型](docs/THREAT_MODEL.md)。
+详见 [测试方案](docs/TEST_PLAN.md)、[最终验证报告](docs/TEST_REPORT.md)、
+[0.1.0 Release Notes](docs/RELEASE_NOTES_0.1.0.md) 和
+[对抗式威胁模型](docs/THREAT_MODEL.md)。
 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题请按
 [SECURITY.md](SECURITY.md) 私下报告。
 
@@ -166,7 +179,8 @@ gh workflow run gia-agent-dispatch.yml -f issue_number=123
 
 - GIA 不直接调用特定 AI 服务；执行器通过 Issue/PR 协议接入。
 - GIA 不存储 GitHub Token，复用 `gh` 的认证。
-- GIA 不自动合并、打 Tag 或发布 Release。
+- GIA CLI/runtime 不自动合并、打 Tag 或发布 Release；canonical release
+  workflow 只响应用户已创建并推送的版本 Tag。
 - GIA 不绕过 GitHub 分支保护。
 - `permissions` 只表达 workflow policy；用户与 Agent 的硬身份边界必须由
   独立 GitHub App/token 和 ruleset 建立。同一 `gh` 用户身份不能充当该边界。

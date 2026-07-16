@@ -8,7 +8,7 @@
 
 修复首轮 T2/T3/T4 暴露的阻塞缺陷，建立 canonical Git 仓库，重新完成真实
 GitHub、对抗场景和用户体验验证。只有三类验证全部通过后，才允许接入
-AiCoding lifecycle。
+下游 lifecycle consumer。
 
 ## 范围
 
@@ -22,14 +22,14 @@ AiCoding lifecycle。
 
 - 自动 merge、Tag 或 Release。
 - 绕过 GitHub 分支保护。
-- 在验证通过前修改 AiCoding lifecycle。
+- 在验证通过前修改任何下游 lifecycle consumer。
 
 ## 决策记录
 
 - 使用三个 Git worktree 隔离并行修改。
 - 先建立本地审计基线，再决定远端仓库可见性。
 - GitHub 写操作失败时必须失败关闭，不能报告部分成功。
-- AiCoding 只消费验证后的独立 capability，不反向绑定 GIA 源码。
+- 下游平台只消费验证后的独立 capability，不反向绑定 GIA 源码。
 
 ## 回滚
 

@@ -18,7 +18,7 @@ import (
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/workflow"
 )
 
-const version = "0.1.0"
+var version = "dev"
 
 type output struct {
 	OK       bool        `json:"ok"`
@@ -57,11 +57,33 @@ type prRequestData struct {
 var getIssueDetail = issue.Get
 var requestDraftPullRequest = workflow.RequestDraftPullRequest
 
+type reportedError struct {
+	err error
+}
+
+func (e reportedError) Error() string {
+	return e.err.Error()
+}
+
+func (e reportedError) Unwrap() error {
+	return e.err
+}
+
 func main() {
-	if err := run(context.Background(), os.Args[1:]); err != nil {
-		emit(output{OK: false, Error: err.Error()})
-		os.Exit(1)
+	if code := execute(context.Background(), os.Args[1:]); code != 0 {
+		os.Exit(code)
 	}
+}
+
+func execute(ctx context.Context, args []string) int {
+	if err := run(ctx, args); err != nil {
+		var reported reportedError
+		if !errors.As(err, &reported) {
+			emit(output{OK: false, Command: commandPath(args), Error: err.Error()})
+		}
+		return 1
+	}
+	return 0
 }
 
 func run(ctx context.Context, args []string) error {
@@ -150,10 +172,10 @@ func cmdDoctor(ctx context.Context, args []string) error {
 		return err
 	}
 	report := workflow.DoctorWithConfig(ctx, *repo, *configPath)
-	emit(output{OK: report.OK, Command: "doctor", Data: report})
 	if !report.OK {
-		return errors.New("doctor checks failed")
+		return emitFailure("doctor", report, errors.New("doctor checks failed"))
 	}
+	emit(output{OK: true, Command: "doctor", Data: report})
 	return nil
 }
 
@@ -514,8 +536,14 @@ func cmdValidate(ctx context.Context, args []string) error {
 		return err
 	}
 	report, err := validate.Run(ctx, *repo, *profile, *expected, cfg)
-	emit(output{OK: err == nil && report.OK, Command: "validate", Data: report})
-	return err
+	if err != nil {
+		return emitFailure("validate", report, err)
+	}
+	if !report.OK {
+		return emitFailure("validate", report, errors.New("validation failed"))
+	}
+	emit(output{OK: true, Command: "validate", Data: report})
+	return nil
 }
 
 func cmdHandoff(ctx context.Context, args []string) error {
@@ -598,10 +626,31 @@ func addConfigFlag(fs *flag.FlagSet) *string {
 	return fs.String("config", "", "explicit config path; overrides .gia config discovery")
 }
 
+func emitFailure(command string, data interface{}, err error) error {
+	emit(output{OK: false, Command: command, Data: data, Error: err.Error()})
+	return reportedError{err: err}
+}
+
 func emit(v output) {
 	v.Command = strings.TrimSpace(v.Command)
-	b, _ := json.MarshalIndent(v, "", "  ")
-	fmt.Println(string(b))
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(v)
+}
+
+func commandPath(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	command := args[0]
+	if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+		switch command {
+		case "issue", "pr", "worktree":
+			command += " " + args[1]
+		}
+	}
+	return command
 }
 
 func usage() {

@@ -3,7 +3,7 @@
 ## Scope
 
 This repository owns the standalone, platform-neutral Git Isolated Agent Kit.
-Do not add dependencies on AiCoding or another upper-layer platform.
+Do not add dependencies on or knowledge of any upper-layer platform.
 
 ## Change Rules
 

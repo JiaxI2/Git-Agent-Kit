@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-07-16
+
+- **test**: 最终 T2 真实 GitHub、T3 对抗场景和 T4 用户体验全部通过；
+  T3 全量 35/35、发布候选 targeted 4/4，T4 核心目标 3/3 且无意外恢复。
+- **docs**: 增加 claim 后 switch/edit/commit/push 快速路径、最终验证报告和
+  `0.1.0` Release Notes 草案。
+- **fix(cli)**: 失败路径只输出一个结构化 JSON 文档，console notify 改写
+  stderr，避免污染机器可读 stdout；JSON 保留可读的 HTML 字符。
+- **release**: 二进制改由 `v0.1.0` Tag workflow 使用固定 Go 1.22.12
+  clean checkout 构建，发布 Windows/Linux amd64 资产和顶层 `SHA256SUMS`。
 - **fix(github)**: 折叠多行 direction 的标题空白；Issue dispatch 对同一 Issue 串行执行并 upsert 单一分类评论，避免 opened/labeled 重复评论和 risk label/评论冲突。
 - **security**: validation 优先绑定当前分支 upstream；没有 upstream 时仅接受唯一远端 ref tip，拒绝用其他 ref 上相同 SHA 冒充当前 PR/ref。
 - **feat**: 增加 `init --format json|yaml|yml`、严格 unknown-field 配置解析和
@@ -26,8 +36,6 @@
 - `protected.branches`、`protected.paths` 和 `rejectForcePush` 进入运行时门禁。
 - 配置支持 JSON/YAML/YML 单一来源加载，多格式并存失败关闭。
 - 新增平台中立 permissions policy；Draft PR 可由执行器申请，批准、合并和发布默认仅 `user`。
-
-## 0.1.0 - 2026-07-16
 
 - Initial standalone GIA Kit.
 - Structured Issue creation from one optimization direction.

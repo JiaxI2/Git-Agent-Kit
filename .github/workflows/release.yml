@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            asset: gia-linux-amd64
+          - os: windows-latest
+            goos: windows
+            asset: gia-windows-amd64.exe
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.22.12"
+          cache-dependency-path: go.sum
+      - name: Validate tag version
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "tag ${{ github.ref_name }} does not match VERSION $version"
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+      - name: Build release asset
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "${{ matrix.goos }}"
+          $env:GOARCH = "amd64"
+          $binary = Join-Path $PWD "dist/${{ matrix.asset }}"
+          go build -trimpath -buildvcs=true -ldflags "-s -w -X main.version=$env:VERSION" -o $binary ./cmd/gia
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = ((& $binary version) -join "`n") | ConvertFrom-Json
+          if (-not $result.ok -or $result.data.version -ne $env:VERSION) {
+            throw "version mismatch: expected $env:VERSION"
+          }
+          $metadata = (go version -m $binary) -join "`n"
+          if ($metadata -notmatch [regex]::Escape("vcs.revision=$env:GITHUB_SHA")) {
+            throw "release binary is not bound to $env:GITHUB_SHA"
+          }
+          if ($metadata -notmatch "vcs.modified=false") {
+            throw "release binary was built from a modified worktree"
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate and verify checksums
+        shell: pwsh
+        run: |
+          $names = @("gia-linux-amd64", "gia-windows-amd64.exe")
+          $lines = foreach ($name in $names) {
+            $path = Join-Path $PWD "dist/$name"
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "missing release asset: $name"
+            }
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          Set-Content -LiteralPath dist/SHA256SUMS -Value $lines -Encoding utf8NoBOM
+          foreach ($line in Get-Content -LiteralPath dist/SHA256SUMS) {
+            $parts = $line -split "\s+", 2
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PWD "dist/$($parts[1])")).Hash.ToLowerInvariant()
+            if ($actual -ne $parts[0]) {
+              throw "checksum mismatch: $($parts[1])"
+            }
+          }
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          gh release create $env:GITHUB_REF_NAME `
+            dist/gia-linux-amd64 `
+            dist/gia-windows-amd64.exe `
+            dist/SHA256SUMS `
+            --verify-tag `
+            --latest `
+            --title "GIA Kit $version" `
+            --notes-file docs/RELEASE_NOTES_0.1.0.md
