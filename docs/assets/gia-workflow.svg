@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- 由 Microsoft Visio, SVG Export 生成 gia-workflow.svg GIA Multi-Agent Git Isolation Workflow -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:ev="http://www.w3.org/2001/xml-events"
+		xmlns:v="http://schemas.microsoft.com/visio/2003/SVGExtensions/" width="16in" height="8.5in" viewBox="0 0 1152 612"
+		xml:space="preserve" color-interpolation-filters="sRGB" class="st17">
+	<v:documentProperties v:langID="2052" v:metric="true" v:viewMarkup="false"/>
+
+	<style type="text/css">
+	<![CDATA[
+		.st1 {fill:#e2f0d9;stroke:#404040;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
+		.st2 {fill:#000000;font-family:Arial;font-size:0.833336em;font-weight:bold}
+		.st3 {font-family:宋体;font-size:1em}
+		.st4 {fill:#ddebf7;stroke:#404040;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
+		.st5 {fill:#fff2cc;stroke:#404040;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
+		.st6 {font-size:1em}
+		.st7 {fill:#f2f2f2;stroke:#404040;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
+		.st8 {fill:#000000;font-family:Arial;font-size:0.833336em}
+		.st9 {fill:none;stroke:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
+		.st10 {fill:#000000;font-family:Arial;font-size:1.5em;font-weight:bold}
+		.st11 {fill:#666666;font-family:Arial;font-size:0.833336em}
+		.st12 {fill:#fce4d6;stroke:#404040;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
+		.st13 {fill:#000000;font-family:宋体;font-size:0.833336em}
+		.st14 {font-family:Arial;font-size:1em}
+		.st15 {marker-end:url(#mrkr13-68);stroke:#404040;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
+		.st16 {fill:#404040;fill-opacity:1;stroke:#404040;stroke-opacity:1;stroke-width:0.22935779816514}
+		.st17 {fill:none;fill-rule:evenodd;font-size:12px;overflow:visible;stroke-linecap:square;stroke-miterlimit:3}
+	]]>
+	</style>
+
+	<defs id="Markers">
+		<g id="lend13">
+			<path d="M 3 1 L 0 0 L 3 -1 L 3 1 " style="stroke:none"/>
+		</g>
+		<marker id="mrkr13-68" class="st16" v:arrowType="13" v:arrowSize="2" v:setback="13.08" refX="-13.08" orient="auto"
+				markerUnits="strokeWidth" overflow="visible">
+			<use xlink:href="#lend13" transform="scale(-4.36,-4.36) "/>
+		</marker>
+	</defs>
+	<g v:mID="0" v:index="1" v:groupContext="foregroundPage">
+		<title>GIA Multi-Agent Git Isolation Workflow</title>
+		<v:pageProperties v:drawingScale="0.0393701" v:pageScale="0.0393701" v:drawingUnits="24" v:shadowOffsetX="8.50394"
+				v:shadowOffsetY="-8.50394"/>
+		<v:layer v:name="连接线" v:index="0"/>
+		<g id="shape1-1" v:mID="1" v:groupContext="shape" transform="translate(41.4,-333)">
+			<title>VMCP_direction</title>
+			<desc>1. 用户 / Agent 输入优化方向</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="73.8" cy="570.6" width="118.08" height="66.24"/>
+			<rect x="0" y="529.2" width="147.6" height="82.8" rx="8.64" ry="8.64" class="st1"/>
+			<text x="39.87" y="567.35" class="st2" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>1. <tspan class="st3">用户</tspan> / Agent<v:newlineChar/><tspan
+						x="43.68" dy="1.3em" class="st3">输入优化方向</tspan></text>		</g>
+		<g id="shape2-6" v:mID="2" v:groupContext="shape" transform="translate(225.72,-333)">
+			<title>VMCP_issue</title>
+			<desc>2. GitHub Issue 任务真源</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="73.8" cy="570.6" width="118.08" height="66.24"/>
+			<rect x="0" y="529.2" width="147.6" height="82.8" rx="8.64" ry="8.64" class="st4"/>
+			<text x="37.4" y="567.1" class="st2" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>2. GitHub Issue<v:newlineChar/><tspan
+						x="53.72" dy="1.275em" class="st3">任务真源</tspan></text>		</g>
+		<g id="shape3-10" v:mID="3" v:groupContext="shape" transform="translate(410.04,-333)">
+			<title>VMCP_claim</title>
+			<desc>3. 原子 Claim gia/claims/&#60;issue&#62;</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="73.8" cy="570.6" width="118.08" height="66.24"/>
+			<rect x="0" y="529.2" width="147.6" height="82.8" rx="8.64" ry="8.64" class="st5"/>
+			<text x="43.2" y="567.85" class="st2" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>3. <tspan class="st3">原子</tspan> Claim<v:newlineChar/><tspan
+						x="29.61" dy="1.225em" class="st6">gia/claims/&#60;issue&#62;</tspan></text>		</g>
+		<g id="shape4-15" v:mID="4" v:groupContext="shape" transform="translate(594.36,-333)">
+			<title>VMCP_workspace</title>
+			<desc>4. 任务分支 + Worktree 编辑 / Commit / Push</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="73.8" cy="570.6" width="118.08" height="66.24"/>
+			<rect x="0" y="529.2" width="147.6" height="82.8" rx="8.64" ry="8.64" class="st7"/>
+			<text x="22.26" y="567.35" class="st8" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>4. <tspan class="st3">任务分支</tspan> + Worktree<v:newlineChar/><tspan
+						x="26.85" dy="1.3em" class="st3">编辑</tspan> / Commit / Push</text>		</g>
+		<g id="shape5-20" v:mID="5" v:groupContext="shape" transform="translate(778.68,-333)">
+			<title>VMCP_validate</title>
+			<desc>5. SHA 绑定验证 smoke / full / release Draft PR</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="73.8" cy="570.6" width="118.08" height="66.24"/>
+			<rect x="0" y="529.2" width="147.6" height="82.8" rx="8.64" ry="8.64" class="st5"/>
+			<text x="36.22" y="561.85" class="st2" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>5. SHA <tspan
+						class="st3">绑定验证<v:newlineChar/></tspan><tspan x="24.89" dy="1.225em" class="st6">smoke / full / release<v:newlineChar/></tspan><tspan
+						x="53.8" dy="1.2em" class="st6">Draft PR</tspan></text>		</g>
+		<g id="shape6-26" v:mID="6" v:groupContext="shape" transform="translate(963,-333)">
+			<title>VMCP_approval</title>
+			<desc>6. 用户审批 Merge / Tag / Release Handoff → 新 Issue</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="73.8" cy="570.6" width="118.08" height="66.24"/>
+			<rect x="0" y="529.2" width="147.6" height="82.8" rx="8.64" ry="8.64" class="st1"/>
+			<text x="48.16" y="561.35" class="st2" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>6. <tspan class="st3">用户审批<v:newlineChar/></tspan><tspan
+						x="22.94" dy="1.225em" class="st6">Merge / Tag / Release<v:newlineChar/></tspan><tspan x="27.92"
+						dy="1.275em" class="st6">Handoff </tspan><tspan class="st3">→</tspan> <tspan class="st3">新</tspan> Issue</text>		</g>
+		<g id="shape7-34" v:mID="7" v:groupContext="shape" transform="translate(360,-536.04)">
+			<title>VMCP_title</title>
+			<desc>GIA 多 Agent Git 隔离工作流</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="216" cy="592.2" width="345.6" height="31.68"/>
+			<rect x="0" y="572.4" width="432" height="39.6" rx="8.64" ry="8.64" class="st9"/>
+			<text x="97.79" y="598.05" class="st10" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>GIA <tspan
+						class="st3">多</tspan> Agent Git <tspan class="st3">隔离工作流</tspan></text>		</g>
+		<g id="shape8-39" v:mID="8" v:groupContext="shape" transform="translate(198,-498.24)">
+			<title>VMCP_subtitle</title>
+			<desc>Issue 任务真源 · 原子认领 · 独立执行面 · SHA 绑定验证 · 用户最终审批</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="378" cy="597.6" width="604.81" height="23.04"/>
+			<rect x="0" y="583.2" width="756" height="28.8" rx="8.64" ry="8.64" class="st9"/>
+			<text x="220.22" y="600.85" class="st11" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>Issue <tspan
+						class="st3">任务真源</tspan> · <tspan class="st3">原子认领</tspan> · <tspan class="st3">独立执行面</tspan> · SHA <tspan
+						class="st3">绑定验证</tspan> · <tspan class="st3">用户最终审批</tspan></text>		</g>
+		<g id="shape9-47" v:mID="9" v:groupContext="shape" transform="translate(63,-135)">
+			<title>VMCP_permission_guard</title>
+			<desc>权限边界 Agent 可申请 PR用户审批、合并和发布</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="153" cy="574.2" width="244.8" height="60.48"/>
+			<rect x="0" y="536.4" width="306" height="75.6" rx="8.64" ry="8.64" class="st12"/>
+			<text x="133" y="570.95" class="st13" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>权限边界<v:newlineChar/><tspan
+						x="60.21" dy="1.3em" class="st14">Agent </tspan>可申请<tspan class="st14"> </tspan><tspan class="st14">PR</tspan>；用户审批、合并和发布</text>		</g>
+		<g id="shape10-53" v:mID="10" v:groupContext="shape" transform="translate(423,-135)">
+			<title>VMCP_sha_guard</title>
+			<desc>验证边界 HEAD 必须等于当前 upstream tip</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="153" cy="574.2" width="244.8" height="60.48"/>
+			<rect x="0" y="536.4" width="306" height="75.6" rx="8.64" ry="8.64" class="st12"/>
+			<text x="133" y="570.95" class="st13" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>验证边界<v:newlineChar/><tspan
+						x="78.82" dy="1.3em" class="st14">HEAD </tspan>必须等于当前<tspan class="st14"> </tspan><tspan class="st14">upstream tip</tspan></text>		</g>
+		<g id="shape11-59" v:mID="11" v:groupContext="shape" transform="translate(783,-135)">
+			<title>VMCP_failure_guard</title>
+			<desc>失败关闭 错误传播、补偿回滚、不破坏用户仓库</desc>
+			<v:textBlock v:margins="rect(0.72,0.72,0.72,0.72)" v:tabSpace="42.5197"/>
+			<v:textRect cx="153" cy="574.2" width="244.8" height="60.48"/>
+			<rect x="0" y="536.4" width="306" height="75.6" rx="8.64" ry="8.64" class="st12"/>
+			<text x="133" y="570.95" class="st13" v:langID="2052"><v:paragraph v:horizAlign="1"/><v:tabList/>失败关闭<v:newlineChar/><tspan
+						x="68" dy="1.3em" class="st6">错误传播</tspan>、补偿回滚、不破坏用户仓库</text>		</g>
+		<g id="shape12-63" v:mID="12" v:groupContext="shape" v:layerMember="0" transform="translate(189,-367.313)">
+			<title>VMCP_flow_01</title>
+			<path d="M0 604.91 L26.91 604.91" class="st15"/>
+		</g>
+		<g id="shape13-69" v:mID="13" v:groupContext="shape" v:layerMember="0" transform="translate(373.32,-367.313)">
+			<title>VMCP_flow_02</title>
+			<path d="M0 604.91 L26.91 604.91" class="st15"/>
+		</g>
+		<g id="shape14-74" v:mID="14" v:groupContext="shape" v:layerMember="0" transform="translate(557.64,-367.313)">
+			<title>VMCP_flow_03</title>
+			<path d="M0 604.91 L26.91 604.91" class="st15"/>
+		</g>
+		<g id="shape15-79" v:mID="15" v:groupContext="shape" v:layerMember="0" transform="translate(741.96,-367.313)">
+			<title>VMCP_flow_04</title>
+			<path d="M0 604.91 L26.91 604.91" class="st15"/>
+		</g>
+		<g id="shape16-84" v:mID="16" v:groupContext="shape" v:layerMember="0" transform="translate(926.28,-367.313)">
+			<title>VMCP_flow_05</title>
+			<path d="M0 604.91 L26.91 604.91" class="st15"/>
+		</g>
+	</g>
+</svg>

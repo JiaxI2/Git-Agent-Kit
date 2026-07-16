@@ -15,6 +15,20 @@
 - 本地验证默认使用 `git worktree`，不切换或污染稳定工作区。
 - 自动化失败时默认停止，不执行 force push、hard reset 或强制清理。
 
+## 工作流程
+
+![GIA 多 Agent Git 隔离工作流](docs/assets/gia-workflow.svg)
+
+GIA 将优化方向转化为 GitHub Issue，通过原子 Claim 和独立 Worktree 建立
+单写者执行面；提交推送后绑定远端 SHA 完成验证，再由 Agent 申请 Draft PR，
+最终审批、合并、Tag 和 Release 始终归用户所有。
+
+该图先以图像生成草案确定视觉层级，再由 Microsoft Visio 基于 Diagram IR
+工程化重绘。可编辑源文件见
+[gia-workflow.vsdx](docs/assets/gia-workflow.vsdx)，可复现定义见
+[gia-workflow.diagram.json](docs/assets/gia-workflow.diagram.json)，PNG 预览见
+[gia-workflow.png](docs/assets/gia-workflow.png)。
+
 ## 5 分钟开始
 
 ### Windows

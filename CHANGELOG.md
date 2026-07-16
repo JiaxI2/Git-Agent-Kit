@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **docs**: 增加由 Microsoft Visio 工程化绘制的 GIA 多 Agent Git 隔离
+  工作流图、可编辑源文件和可复现 Diagram IR。
+
 ## 0.1.0 - 2026-07-16
 
 - **test**: 最终 T2 真实 GitHub、T3 对抗场景和 T4 用户体验全部通过；
