@@ -175,6 +175,9 @@ func Claim(ctx context.Context, repo string, issue int, executor string, cfg con
 	if !cfg.Protected.RejectForcePush {
 		return ClaimResult{}, fmt.Errorf("claim requires protected.rejectForcePush=true; GIA never updates an existing remote claim ref")
 	}
+	if !cfg.ExecutorAllowed(executor) {
+		return ClaimResult{}, fmt.Errorf("executor %q is not allowed by permissions.allowedExecutors", strings.TrimSpace(executor))
+	}
 	executorID := sanitize(executor)
 	if executorID == "" {
 		return ClaimResult{}, fmt.Errorf("executor must contain at least one letter or number")

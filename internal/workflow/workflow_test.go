@@ -236,6 +236,12 @@ func TestClaimRejectsUnsafePolicyAndProtectedBranch(t *testing.T) {
 		t.Fatalf("unsafe policy error = %v", err)
 	}
 
+	cfg = config.Default()
+	cfg.Permissions.AllowedExecutors = []string{"local-agent"}
+	if _, err := Claim(context.Background(), t.TempDir(), 1, "web-agent", cfg); err == nil || !strings.Contains(err.Error(), "permissions.allowedExecutors") {
+		t.Fatalf("executor permission error = %v", err)
+	}
+
 	_, repo := newClaimRemote(t)
 	fake := newFakeClaimGH(false)
 	withClaimRunner(t, fake.run)
