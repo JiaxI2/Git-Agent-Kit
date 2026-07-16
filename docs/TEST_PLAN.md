@@ -26,6 +26,9 @@ GitHub I/O 聚焦测试还必须覆盖：
 6. Draft PR 申请始终包含 `--draft`，完整正文绑定 executor，远端非 Draft 或
    字段不匹配时返回包含 PR URL 的部分成功错误，且不暴露审批、合并或发布能力。
 
+配置加载需覆盖 JSON、YAML、YML 三种单一来源，以及多格式并存失败关闭；权限
+默认值需确认 Agent 只能申请 Draft PR，批准、合并和发布主体仍为 `user`。
+
 ### T1 本地沙箱集成
 
 运行：
@@ -73,11 +76,14 @@ Windows：
 ### T3 对抗测试
 
 - Issue 正文包含 `rm -rf`、PowerShell 删除命令或提示注入；确认 GIA 不执行正文。
-- 并发两次 `claim`；确认第二次因标签/分支冲突暴露失败，不覆盖历史。
+- 从两个独立 clone 并发 `claim`；确认只有一个能首次创建
+  `gia/claims/<issue>`，第二个失败且不覆盖租约或任务分支。
+- 模拟 `gh issue edit` 部分生效后失败、评论失败；确认标签和本次新建 ref 被
+  补偿，命令不报告 `CLAIMED`，补偿失败信息包含人工恢复 ref。
 - 模拟断网、过期认证、远端分支已存在、PR 被更新。
 - 尝试删除脏 worktree。
 - 修改 protected path，确认风险升级流程和人工门禁。
-- 子模块 dirty、未推送 commit、detached HEAD。
+- 子模块 dirty、未推送 commit、远端 PR head 前移后的旧 SHA、detached HEAD。
 
 ### T4 用户体验测试
 

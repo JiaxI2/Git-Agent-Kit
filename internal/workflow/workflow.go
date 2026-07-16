@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +18,8 @@ import (
 	"github.com/example/git-isolated-agent-kit/internal/githubx"
 	"github.com/example/git-isolated-agent-kit/internal/gitx"
 )
+
+var claimRun = run
 
 type DoctorCheck struct {
 	Name   string `json:"name"`
@@ -86,6 +89,7 @@ type FeedbackResult struct {
 
 var runGitHub = githubx.Run
 var runGitHubWithBodyFile = githubx.RunWithBodyFile
+var claimRunWithBodyFile = githubx.RunWithBodyFile
 
 func Initialize(repo string, force bool) error {
 	dir := filepath.Join(repo, ".gia")
@@ -138,33 +142,169 @@ func Doctor(ctx context.Context, repo string) DoctorReport {
 }
 
 func Claim(ctx context.Context, repo string, issue int, executor string, cfg config.Config) (ClaimResult, error) {
-	if err := gitx.Fetch(ctx, repo); err != nil {
+	if !cfg.Protected.RejectForcePush {
+		return ClaimResult{}, fmt.Errorf("claim requires protected.rejectForcePush=true; GIA never updates an existing remote claim ref")
+	}
+	executorID := sanitize(executor)
+	if executorID == "" {
+		return ClaimResult{}, fmt.Errorf("executor must contain at least one letter or number")
+	}
+	if strings.TrimSpace(cfg.Issue.ReadyLabel) == "" || strings.TrimSpace(cfg.Issue.ClaimedLabel) == "" {
+		return ClaimResult{}, fmt.Errorf("issue readyLabel and claimedLabel must be configured")
+	}
+	remote := cfg.ValidationRemote()
+	if _, err := gitx.Run(ctx, repo, "fetch", "--prune", remote); err != nil {
 		return ClaimResult{}, err
 	}
-	base := "origin/" + cfg.DefaultBranch
+	base := remote + "/" + cfg.DefaultBranch
 	head, err := gitx.Run(ctx, repo, "rev-parse", base)
 	if err != nil {
 		return ClaimResult{}, err
 	}
 	slug := fmt.Sprintf("issue-%d", issue)
-	branch := strings.NewReplacer("{executor}", sanitize(executor), "{type}", "feat", "{issue}", fmt.Sprint(issue), "{slug}", slug).Replace(cfg.Branches.Pattern)
-	full, err := run(ctx, repo, "gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+	branch := strings.NewReplacer("{executor}", executorID, "{type}", "feat", "{issue}", fmt.Sprint(issue), "{slug}", slug).Replace(cfg.Branches.Pattern)
+	leaseBranch := fmt.Sprintf("gia/claims/%d", issue)
+	for _, candidate := range []string{branch, leaseBranch} {
+		if config.MatchAny(cfg.Protected.Branches, candidate) {
+			return ClaimResult{}, fmt.Errorf("refuse claim branch %q: matches protected.branches", candidate)
+		}
+	}
+	full, err := claimRun(ctx, repo, "gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	// GitHub branch creation through git is intentionally explicit and auditable.
-	if _, err := gitx.Run(ctx, repo, "branch", branch, head); err != nil && !strings.Contains(err.Error(), "already exists") {
+	full = strings.TrimSpace(full)
+	if full == "" {
+		return ClaimResult{}, fmt.Errorf("gh repo view returned an empty nameWithOwner")
+	}
+	if err := claimableIssue(ctx, repo, full, issue, cfg); err != nil {
 		return ClaimResult{}, err
 	}
-	if _, err := gitx.Run(ctx, repo, "push", "-u", "origin", branch); err != nil {
+	if _, err := gitx.Run(ctx, repo, "branch", branch, head); err != nil {
 		return ClaimResult{}, err
 	}
-	_, _ = run(ctx, repo, "gh", "issue", "edit", fmt.Sprint(issue), "--repo", strings.TrimSpace(full), "--add-label", cfg.Issue.ClaimedLabel, "--remove-label", cfg.Issue.ReadyLabel, "--add-label", "executor:"+executor)
-	comment := fmt.Sprintf("GIA claimed this task.\n\n- executor: `%s`\n- branch: `%s`\n- base head: `%s`\n- state: `CLAIMED`", executor, branch, head)
-	if _, err := runGitHubWithBodyFile(ctx, repo, comment, "issue", "comment", fmt.Sprint(issue), "--repo", strings.TrimSpace(full)); err != nil {
-		return ClaimResult{}, err
+	artifacts := claimArtifacts{localBranch: branch}
+	if err := pushNewRemoteBranch(ctx, repo, remote, head, leaseBranch, false); err != nil {
+		return ClaimResult{}, claimFailure(err, cleanupClaim(ctx, repo, remote, full, issue, executorID, cfg, artifacts), artifacts)
+	}
+	artifacts.leaseBranch = leaseBranch
+	if err := pushNewRemoteBranch(ctx, repo, remote, branch, branch, true); err != nil {
+		return ClaimResult{}, claimFailure(err, cleanupClaim(ctx, repo, remote, full, issue, executorID, cfg, artifacts), artifacts)
+	}
+	artifacts.taskBranch = branch
+
+	artifacts.labelsChanged = true
+	if _, err := claimRun(ctx, repo, "gh", "issue", "edit", fmt.Sprint(issue), "--repo", full, "--add-label", cfg.Issue.ClaimedLabel, "--remove-label", cfg.Issue.ReadyLabel, "--add-label", "executor:"+executorID); err != nil {
+		return ClaimResult{}, claimFailure(fmt.Errorf("update issue claim labels: %w", err), cleanupClaim(ctx, repo, remote, full, issue, executorID, cfg, artifacts), artifacts)
+	}
+	if err := writeClaimAudit(ctx, repo, full, issue, executor, branch, head); err != nil {
+		return ClaimResult{}, claimFailure(fmt.Errorf("write issue claim audit comment: %w", err), cleanupClaim(ctx, repo, remote, full, issue, executorID, cfg, artifacts), artifacts)
 	}
 	return ClaimResult{issue, branch, executor, "CLAIMED", head}, nil
+}
+
+type claimArtifacts struct {
+	localBranch   string
+	leaseBranch   string
+	taskBranch    string
+	labelsChanged bool
+}
+
+type issueState struct {
+	State  string `json:"state"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+func claimableIssue(ctx context.Context, repo, full string, issue int, cfg config.Config) error {
+	out, err := claimRun(ctx, repo, "gh", "issue", "view", fmt.Sprint(issue), "--repo", full, "--json", "state,labels")
+	if err != nil {
+		return fmt.Errorf("inspect issue before claim: %w", err)
+	}
+	var state issueState
+	if err := json.Unmarshal([]byte(out), &state); err != nil {
+		return fmt.Errorf("parse issue state before claim: %w", err)
+	}
+	if !strings.EqualFold(state.State, "OPEN") {
+		return fmt.Errorf("issue #%d is not open", issue)
+	}
+	ready := false
+	for _, label := range state.Labels {
+		if label.Name == cfg.Issue.ClaimedLabel {
+			return fmt.Errorf("issue #%d is already claimed", issue)
+		}
+		if label.Name == cfg.Issue.ReadyLabel {
+			ready = true
+		}
+	}
+	if !ready {
+		return fmt.Errorf("issue #%d is not claimable: missing label %q", issue, cfg.Issue.ReadyLabel)
+	}
+	return nil
+}
+
+func pushNewRemoteBranch(ctx context.Context, repo, remote, source, branch string, setUpstream bool) error {
+	args := []string{"push", "--porcelain"}
+	if setUpstream {
+		args = append(args, "-u")
+	}
+	ref := "refs/heads/" + branch
+	args = append(args, remote, source+":"+ref)
+	out, err := gitx.Run(ctx, repo, args...)
+	if err != nil {
+		return fmt.Errorf("create remote branch %q: %w", branch, err)
+	}
+	if !createdRemoteRef(out, ref) {
+		return fmt.Errorf("remote branch %q already exists; ownership was not acquired", branch)
+	}
+	return nil
+}
+
+func createdRemoteRef(output, ref string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 3 && fields[0] == "*" && strings.HasSuffix(fields[1], ":"+ref) && fields[2] == "[new branch]" {
+			return true
+		}
+	}
+	return false
+}
+
+func writeClaimAudit(ctx context.Context, repo, full string, issue int, executor, branch, head string) error {
+	body := fmt.Sprintf("GIA claimed this task.\n\n- executor: `%s`\n- branch: `%s`\n- base head: `%s`\n- state: `CLAIMED`", executor, branch, head)
+	_, err := claimRunWithBodyFile(ctx, repo, body, "issue", "comment", fmt.Sprint(issue), "--repo", full)
+	return err
+}
+
+func cleanupClaim(ctx context.Context, repo, remote, full string, issue int, executor string, cfg config.Config, artifacts claimArtifacts) error {
+	var cleanupErrors []error
+	if artifacts.labelsChanged {
+		if _, err := claimRun(ctx, repo, "gh", "issue", "edit", fmt.Sprint(issue), "--repo", full, "--add-label", cfg.Issue.ReadyLabel, "--remove-label", cfg.Issue.ClaimedLabel, "--remove-label", "executor:"+executor); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("restore issue labels: %w", err))
+		}
+	}
+	for _, branch := range []string{artifacts.taskBranch, artifacts.leaseBranch} {
+		if branch == "" {
+			continue
+		}
+		if _, err := gitx.Run(ctx, repo, "push", "--porcelain", remote, "--delete", branch); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete remote branch %q: %w", branch, err))
+		}
+	}
+	if artifacts.localBranch != "" {
+		if _, err := gitx.Run(ctx, repo, "branch", "-d", artifacts.localBranch); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete local branch %q: %w", artifacts.localBranch, err))
+		}
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+func claimFailure(cause, cleanupErr error, artifacts claimArtifacts) error {
+	if cleanupErr != nil {
+		return fmt.Errorf("claim failed before CLAIMED: %w; automatic recovery was incomplete (lease=%q, task=%q, local=%q): %v", cause, artifacts.leaseBranch, artifacts.taskBranch, artifacts.localBranch, cleanupErr)
+	}
+	return fmt.Errorf("claim failed before CLAIMED: %w; created claim artifacts were rolled back", cause)
 }
 
 func CreateValidationWorktree(ctx context.Context, repo string, pr int, ref, root string) (WorktreeResult, error) {

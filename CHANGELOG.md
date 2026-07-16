@@ -12,6 +12,12 @@
 - Issue 创建前自动补齐 lifecycle、risk、executor labels；无法创建或复核时失败关闭。
 - 使用结构化 GitHub 输出复核新 Issue 的编号、URL 和 labels，并提供 `List`/`ListReady` API。
 - 增加平台中立的 Draft PR 申请 API：始终创建 Draft、复核远端字段并返回 `PENDING_USER_APPROVAL`，不提供审批、合并或发布能力。
+- Claim 改用 `gia/claims/<issue>` 远端 ref 原子租约，重复和并发认领失败关闭。
+- Claim 元数据错误完整传播，并补偿标签、任务分支和租约分支。
+- Validation 要求 expected SHA 是配置 remote 的当前 ref tip，拒绝未推送和过期 SHA。
+- `protected.branches`、`protected.paths` 和 `rejectForcePush` 进入运行时门禁。
+- 配置支持 JSON/YAML/YML 单一来源加载，多格式并存失败关闭。
+- 新增平台中立 permissions policy；Draft PR 可由执行器申请，批准、合并和发布默认仅 `user`。
 
 ## 0.1.0 - 2026-07-16
 

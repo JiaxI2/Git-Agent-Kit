@@ -25,6 +25,7 @@ type Report struct {
 	Profile      string `json:"profile"`
 	Head         string `json:"head"`
 	ExpectedHead string `json:"expectedHead,omitempty"`
+	Remote       string `json:"remote"`
 	CleanBefore  bool   `json:"cleanBefore"`
 	CleanAfter   bool   `json:"cleanAfter"`
 	OS           string `json:"os"`
@@ -44,8 +45,44 @@ func Run(ctx context.Context, repo, profile, expected string, cfg config.Config)
 	if cfg.Validation.RequireExpectedHead && expected == "" {
 		return Report{}, fmt.Errorf("profile requires --expected-head; current HEAD is %s", head)
 	}
-	if expected != "" && head != expected {
-		return Report{}, fmt.Errorf("HEAD mismatch: expected %s, got %s", expected, head)
+	validatedHead := expected
+	if validatedHead == "" {
+		validatedHead = head
+	}
+	canonicalExpected, err := gitx.Run(ctx, repo, "rev-parse", "--verify", validatedHead+"^{commit}")
+	if err != nil {
+		return Report{}, fmt.Errorf("resolve expected HEAD %q: %w", validatedHead, err)
+	}
+	if head != canonicalExpected {
+		return Report{}, fmt.Errorf("HEAD mismatch: expected %s, got %s", canonicalExpected, head)
+	}
+	remote := cfg.ValidationRemote()
+	if _, err := gitx.Run(ctx, repo, "fetch", "--prune", remote); err != nil {
+		return Report{}, fmt.Errorf("fetch validation remote %q: %w", remote, err)
+	}
+	remoteRefs, err := gitx.Run(ctx, repo, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/"+remote+"/")
+	if err != nil {
+		return Report{}, fmt.Errorf("inspect validation remote refs: %w", err)
+	}
+	if !remoteRefAtHead(remoteRefs, canonicalExpected) {
+		return Report{}, fmt.Errorf("expected HEAD %s is not the current tip of any fetched %q remote ref; push the commit or refresh the validation worktree", canonicalExpected, remote)
+	}
+	branch, err := gitx.Branch(ctx, repo)
+	if err != nil {
+		return Report{}, err
+	}
+	if strings.TrimSpace(branch) == "" {
+		return Report{}, fmt.Errorf("validation refuses detached HEAD %s", head)
+	}
+	if config.MatchAny(cfg.Protected.Branches, branch) {
+		return Report{}, fmt.Errorf("validation branch %q matches protected.branches", branch)
+	}
+	protected, err := protectedChanges(ctx, repo, remote+"/"+cfg.DefaultBranch, canonicalExpected, cfg.Protected.Paths)
+	if err != nil {
+		return Report{}, err
+	}
+	if len(protected) != 0 {
+		return Report{}, fmt.Errorf("validation requires manual review for protected paths: %s", strings.Join(protected, ", "))
 	}
 	cleanBefore, err := gitx.IsClean(ctx, repo)
 	if err != nil {
@@ -54,7 +91,7 @@ func Run(ctx context.Context, repo, profile, expected string, cfg config.Config)
 	if cfg.Validation.RequireClean && !cleanBefore {
 		return Report{}, fmt.Errorf("repository is dirty before validation")
 	}
-	report := Report{OK: true, Profile: profile, Head: head, ExpectedHead: expected, CleanBefore: cleanBefore, OS: runtime.GOOS, Arch: runtime.GOARCH}
+	report := Report{OK: true, Profile: profile, Head: head, ExpectedHead: expected, Remote: remote, CleanBefore: cleanBefore, OS: runtime.GOOS, Arch: runtime.GOARCH}
 	for _, c := range cmds {
 		start := time.Now()
 		out, e := shell(ctx, repo, c)
@@ -77,6 +114,37 @@ func Run(ctx context.Context, repo, profile, expected string, cfg config.Config)
 		return report, fmt.Errorf("validation failed")
 	}
 	return report, nil
+}
+
+func remoteRefAtHead(refs, expected string) bool {
+	for _, line := range strings.Split(refs, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func protectedChanges(ctx context.Context, repo, base, head string, patterns []string) ([]string, error) {
+	if len(patterns) == 0 {
+		return nil, nil
+	}
+	if _, err := gitx.Run(ctx, repo, "rev-parse", "--verify", base+"^{commit}"); err != nil {
+		return nil, fmt.Errorf("resolve protected-path base %q: %w", base, err)
+	}
+	out, err := gitx.Run(ctx, repo, "diff", "--name-only", "-z", base+"..."+head)
+	if err != nil {
+		return nil, fmt.Errorf("inspect changed paths against %q: %w", base, err)
+	}
+	var protected []string
+	for _, name := range strings.Split(out, "\x00") {
+		name = strings.TrimSpace(name)
+		if name != "" && config.MatchAny(patterns, name) {
+			protected = append(protected, name)
+		}
+	}
+	return protected, nil
 }
 
 func shell(ctx context.Context, dir, command string) (string, error) {

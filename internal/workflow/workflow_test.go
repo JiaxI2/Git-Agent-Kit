@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/example/git-isolated-agent-kit/internal/config"
@@ -39,241 +41,339 @@ func TestSanitize(t *testing.T) {
 	}
 }
 
-func TestHandoffPreservesMultilineComment(t *testing.T) {
-	oldRun := runGitHub
-	oldRunBody := runGitHubWithBodyFile
-	t.Cleanup(func() {
-		runGitHub = oldRun
-		runGitHubWithBodyFile = oldRunBody
-	})
-
-	runGitHub = func(_ context.Context, _ string, args ...string) (string, error) {
-		if strings.Join(args[:2], " ") != "pr view" {
-			return "", errors.New("unexpected GitHub call")
-		}
-		return "0123456789abcdef0123456789abcdef01234567", nil
+func TestCreatedRemoteRefRequiresNewBranchPorcelainStatus(t *testing.T) {
+	ref := "refs/heads/gia/claims/42"
+	if !createdRemoteRef("*\tHEAD:"+ref+"\t[new branch]\nDone", ref) {
+		t.Fatal("new branch porcelain status was not accepted")
 	}
-	var comment string
-	runGitHubWithBodyFile = func(_ context.Context, _ string, body string, args ...string) (string, error) {
-		if strings.Join(args[:2], " ") != "pr comment" {
-			return "", errors.New("unexpected GitHub body call")
-		}
-		comment = body
-		return "", nil
-	}
-
-	result, err := Handoff(context.Background(), t.TempDir(), 12, "local-agent", "LOCAL_VALIDATION", "line one\nline two")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Head != "0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("result=%+v", result)
-	}
-	for _, expected := range []string{
-		"<!-- GIA:HANDOFF:START -->",
-		"executor: local-agent",
-		"state: LOCAL_VALIDATION",
-		"note: line one line two",
-		"<!-- GIA:HANDOFF:END -->",
+	for _, output := range []string{
+		"=\tHEAD:" + ref + "\t[up to date]\nDone",
+		" \tHEAD:" + ref + "\t[fast-forward]\nDone",
+		"",
 	} {
-		if !strings.Contains(comment, expected) {
-			t.Fatalf("comment missing %q:\n%s", expected, comment)
+		if createdRemoteRef(output, ref) {
+			t.Fatalf("non-creation status was accepted: %q", output)
 		}
 	}
 }
 
-func TestHandoffRejectsEmptyHead(t *testing.T) {
-	oldRun := runGitHub
-	oldRunBody := runGitHubWithBodyFile
-	t.Cleanup(func() {
-		runGitHub = oldRun
-		runGitHubWithBodyFile = oldRunBody
-	})
-	runGitHub = func(_ context.Context, _ string, _ ...string) (string, error) {
-		return "", nil
-	}
-	runGitHubWithBodyFile = func(_ context.Context, _ string, _ string, _ ...string) (string, error) {
-		t.Fatal("comment must not be created without a PR head")
-		return "", nil
-	}
+func TestClaimConcurrentSingleWriterAndRepeatedClaimFails(t *testing.T) {
+	remote, firstRepo := newClaimRemote(t)
+	secondRepo := cloneClaimRepo(t, remote, "second")
+	thirdRepo := cloneClaimRepo(t, remote, "third")
+	fake := newFakeClaimGH(true)
+	withClaimRunner(t, fake.run)
+	cfg := config.Default()
 
-	if _, err := Handoff(context.Background(), t.TempDir(), 12, "local-agent", "LOCAL_VALIDATION", "note"); err == nil || !strings.Contains(err.Error(), "empty headRefOid") {
-		t.Fatalf("err=%v", err)
+	type result struct {
+		claim ClaimResult
+		err   error
 	}
-}
-
-func TestRequestDraftPullRequestUsesDraftBodyFileAndPendingApproval(t *testing.T) {
-	oldRun := runGitHub
-	oldRunBody := runGitHubWithBodyFile
-	t.Cleanup(func() {
-		runGitHub = oldRun
-		runGitHubWithBodyFile = oldRunBody
-	})
-
-	var createdBody string
-	runGitHub = func(_ context.Context, _ string, args ...string) (string, error) {
-		switch strings.Join(args[:2], " ") {
-		case "repo view":
-			return "owner/repo", nil
-		case "pr view":
-			record := draftPullRequestRecord{
-				Number:      17,
-				URL:         "https://github.com/owner/repo/pull/17",
-				IsDraft:     true,
-				BaseRefName: "main",
-				HeadRefName: "agent/web/feat/17-task",
-				Title:       "Prepare isolated change",
-				Body:        createdBody,
-			}
-			data, err := json.Marshal(record)
-			return string(data), err
-		default:
-			return "", errors.New("unexpected GitHub call")
-		}
-	}
-	runGitHubWithBodyFile = func(_ context.Context, _ string, body string, args ...string) (string, error) {
-		if strings.Join(args[:2], " ") != "pr create" {
-			return "", errors.New("unexpected GitHub body call")
-		}
-		if !slices.Contains(args, "--draft") {
-			t.Fatalf("--draft missing from args: %v", args)
-		}
-		for key, value := range map[string]string{
-			"--repo":  "owner/repo",
-			"--base":  "main",
-			"--head":  "agent/web/feat/17-task",
-			"--title": "Prepare isolated change",
-		} {
-			if !containsPair(args, key, value) {
-				t.Fatalf("%s %q missing from args: %v", key, value, args)
-			}
-		}
-		if slices.Contains(args, "--body") {
-			t.Fatalf("body was passed as a command argument: %v", args)
-		}
-		createdBody = body
-		return "https://github.com/owner/repo/pull/17", nil
-	}
-
-	result, err := RequestDraftPullRequest(context.Background(), DraftPullRequestRequest{
-		Repo:     t.TempDir(),
-		Base:     "main",
-		Head:     "agent/web/feat/17-task",
-		Title:    "Prepare isolated change",
-		Body:     "First line\n\nSecond line",
-		Executor: "web-agent",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Number != 17 || result.State != "PENDING_USER_APPROVAL" || result.Executor != "web-agent" {
-		t.Fatalf("result=%+v", result)
-	}
-	for _, expected := range []string{
-		"First line\n\nSecond line",
-		"<!-- GIA:DRAFT-PR:START -->",
-		"executor: web-agent",
-		"state: PENDING_USER_APPROVAL",
-		"<!-- GIA:DRAFT-PR:END -->",
-	} {
-		if !strings.Contains(createdBody, expected) {
-			t.Fatalf("body missing %q:\n%s", expected, createdBody)
-		}
-	}
-}
-
-func TestRequestDraftPullRequestRejectsInvalidRequestsBeforeGitHub(t *testing.T) {
-	oldRun := runGitHub
-	oldRunBody := runGitHubWithBodyFile
-	t.Cleanup(func() {
-		runGitHub = oldRun
-		runGitHubWithBodyFile = oldRunBody
-	})
-	runGitHub = func(_ context.Context, _ string, _ ...string) (string, error) {
-		t.Fatal("GitHub must not be called for an invalid request")
-		return "", nil
-	}
-	runGitHubWithBodyFile = func(_ context.Context, _ string, _ string, _ ...string) (string, error) {
-		t.Fatal("GitHub must not be called for an invalid request")
-		return "", nil
-	}
-
-	valid := DraftPullRequestRequest{
-		Repo:     t.TempDir(),
-		Base:     "main",
-		Head:     "agent/task",
-		Title:    "Title",
-		Executor: "web-agent",
-	}
-	tests := []struct {
-		name   string
-		mutate func(*DraftPullRequestRequest)
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for _, request := range []struct {
+		repo     string
+		executor string
 	}{
-		{name: "empty head", mutate: func(r *DraftPullRequestRequest) { r.Head = "" }},
-		{name: "empty title", mutate: func(r *DraftPullRequestRequest) { r.Title = "" }},
-		{name: "empty executor", mutate: func(r *DraftPullRequestRequest) { r.Executor = "" }},
-		{name: "multiline executor", mutate: func(r *DraftPullRequestRequest) { r.Executor = "web\nagent" }},
+		{repo: firstRepo, executor: "web-agent"},
+		{repo: secondRepo, executor: "local-agent"},
+	} {
+		request := request
+		go func() {
+			<-start
+			got, err := Claim(context.Background(), request.repo, 42, request.executor, cfg)
+			results <- result{claim: got, err: err}
+		}()
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			request := valid
-			test.mutate(&request)
-			if _, err := RequestDraftPullRequest(context.Background(), request); err == nil {
-				t.Fatal("expected request validation error")
+	close(start)
+
+	var successes, failures int
+	for range 2 {
+		got := <-results
+		if got.err == nil {
+			successes++
+			if got.claim.State != "CLAIMED" {
+				t.Errorf("successful claim state = %q", got.claim.State)
+			}
+		} else {
+			failures++
+		}
+	}
+	if successes != 1 || failures != 1 {
+		t.Fatalf("concurrent claims: successes=%d failures=%d, want one each", successes, failures)
+	}
+
+	refs := gitOutput(t, remote, "--git-dir", remote, "for-each-ref", "--format=%(refname)", "refs/heads/gia/claims/42", "refs/heads/agent/")
+	lines := nonemptyLines(refs)
+	if len(lines) != 2 {
+		t.Fatalf("remote claim refs = %q, want one lease and one task branch", lines)
+	}
+	if !containsLine(lines, "refs/heads/gia/claims/42") {
+		t.Fatalf("missing claim lease in %q", lines)
+	}
+
+	fake.resetToReady()
+	if _, err := Claim(context.Background(), thirdRepo, 42, "review-agent", cfg); err == nil || !strings.Contains(err.Error(), "ownership was not acquired") {
+		t.Fatalf("repeated claim error = %v, want remote lease conflict", err)
+	}
+}
+
+func TestClaimMetadataFailuresRollbackArtifacts(t *testing.T) {
+	tests := []struct {
+		name        string
+		failEdit    bool
+		failComment bool
+	}{
+		{name: "issue edit", failEdit: true},
+		{name: "issue comment", failComment: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			remote, repo := newClaimRemote(t)
+			fake := newFakeClaimGH(false)
+			fake.failEdit = tt.failEdit
+			fake.failComment = tt.failComment
+			withClaimRunner(t, fake.run)
+
+			if got, err := Claim(context.Background(), repo, 7, "web-agent", config.Default()); err == nil {
+				t.Fatalf("Claim() = %+v, want metadata error", got)
+			} else if !strings.Contains(err.Error(), "failed before CLAIMED") {
+				t.Fatalf("Claim() error = %v, want fail-closed context", err)
+			}
+
+			refs := gitOutput(t, remote, "--git-dir", remote, "for-each-ref", "--format=%(refname)", "refs/heads/gia/claims/7", "refs/heads/agent/")
+			if strings.TrimSpace(refs) != "" {
+				t.Fatalf("claim refs survived rollback: %q", refs)
+			}
+			if branch := gitOutput(t, repo, "branch", "--list", "agent/web-agent/feat/7-issue-7"); strings.TrimSpace(branch) != "" {
+				t.Fatalf("local task branch survived rollback: %q", branch)
+			}
+			if !fake.hasLabel(config.Default().Issue.ReadyLabel) || fake.hasLabel(config.Default().Issue.ClaimedLabel) || fake.hasLabel("executor:web-agent") {
+				t.Fatalf("labels not restored after failure: %v", fake.labelNames())
 			}
 		})
 	}
 }
 
-func TestRequestDraftPullRequestRejectsNonDraftRemoteResult(t *testing.T) {
-	oldRun := runGitHub
-	oldRunBody := runGitHubWithBodyFile
-	t.Cleanup(func() {
-		runGitHub = oldRun
-		runGitHubWithBodyFile = oldRunBody
-	})
-	const createdURL = "https://github.com/owner/repo/pull/17"
-	var createdBody string
-	runGitHub = func(_ context.Context, _ string, args ...string) (string, error) {
-		switch strings.Join(args[:2], " ") {
-		case "repo view":
-			return "owner/repo", nil
-		case "pr view":
-			record := draftPullRequestRecord{
-				Number:      17,
-				URL:         createdURL,
-				IsDraft:     false,
-				BaseRefName: "main",
-				HeadRefName: "agent/task",
-				Title:       "Title",
-				Body:        createdBody,
-			}
-			data, err := json.Marshal(record)
-			return string(data), err
-		default:
-			return "", errors.New("unexpected GitHub call")
-		}
-	}
-	runGitHubWithBodyFile = func(_ context.Context, _ string, body string, _ ...string) (string, error) {
-		createdBody = body
-		return createdURL, nil
+func TestClaimRejectsUnsafePolicyAndProtectedBranch(t *testing.T) {
+	cfg := config.Default()
+	cfg.Protected.RejectForcePush = false
+	if _, err := Claim(context.Background(), t.TempDir(), 1, "web-agent", cfg); err == nil || !strings.Contains(err.Error(), "rejectForcePush=true") {
+		t.Fatalf("unsafe policy error = %v", err)
 	}
 
-	_, err := RequestDraftPullRequest(context.Background(), DraftPullRequestRequest{
-		Repo:     t.TempDir(),
-		Base:     "main",
-		Head:     "agent/task",
-		Title:    "Title",
-		Executor: "web-agent",
-	})
-	if err == nil || !strings.Contains(err.Error(), createdURL) || !strings.Contains(err.Error(), "not a draft") {
-		t.Fatalf("err=%v", err)
+	_, repo := newClaimRemote(t)
+	fake := newFakeClaimGH(false)
+	withClaimRunner(t, fake.run)
+	cfg = config.Default()
+	cfg.Branches.Pattern = "main"
+	if _, err := Claim(context.Background(), repo, 1, "web-agent", cfg); err == nil || !strings.Contains(err.Error(), "protected.branches") {
+		t.Fatalf("protected branch error = %v", err)
 	}
 }
 
-func containsPair(args []string, key, value string) bool {
-	for index := 0; index+1 < len(args); index++ {
-		if args[index] == key && args[index+1] == value {
+func TestClaimFailureNamesArtifactsWhenRecoveryIsIncomplete(t *testing.T) {
+	artifacts := claimArtifacts{
+		localBranch: "agent/web/feat/9-issue-9",
+		leaseBranch: "gia/claims/9",
+		taskBranch:  "agent/web/feat/9-issue-9",
+	}
+	err := claimFailure(errors.New("metadata failed"), errors.New("delete failed"), artifacts)
+	for _, want := range []string{artifacts.localBranch, artifacts.leaseBranch, artifacts.taskBranch, "automatic recovery was incomplete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("claimFailure() = %q, missing %q", err, want)
+		}
+	}
+}
+
+type fakeClaimGH struct {
+	mu            sync.Mutex
+	labels        map[string]bool
+	failEdit      bool
+	failComment   bool
+	barrier       chan struct{}
+	barrierTarget int
+	barrierCount  int
+}
+
+func newFakeClaimGH(barrier bool) *fakeClaimGH {
+	fake := &fakeClaimGH{labels: map[string]bool{config.Default().Issue.ReadyLabel: true}}
+	if barrier {
+		fake.barrier = make(chan struct{})
+		fake.barrierTarget = 2
+	}
+	return fake
+}
+
+func (f *fakeClaimGH) run(_ context.Context, _ string, name string, args ...string) (string, error) {
+	if name != "gh" {
+		return "", fmt.Errorf("unexpected command %q", name)
+	}
+	if len(args) >= 2 && args[0] == "repo" && args[1] == "view" {
+		return "owner/repo", nil
+	}
+	if len(args) >= 3 && args[0] == "issue" && args[1] == "view" {
+		f.waitForConcurrentViews()
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		state := issueState{State: "OPEN"}
+		for _, name := range f.labelNamesLocked() {
+			state.Labels = append(state.Labels, struct {
+				Name string `json:"name"`
+			}{Name: name})
+		}
+		data, err := json.Marshal(state)
+		return string(data), err
+	}
+	if len(args) >= 3 && args[0] == "issue" && args[1] == "edit" {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.applyLabelArguments(args)
+		if f.failEdit {
+			f.failEdit = false
+			return "", fmt.Errorf("injected issue edit failure after partial label update")
+		}
+		return "", nil
+	}
+	if len(args) >= 3 && args[0] == "issue" && args[1] == "comment" {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.failComment {
+			return "", fmt.Errorf("injected issue comment failure")
+		}
+		return "", nil
+	}
+	return "", fmt.Errorf("unexpected gh arguments: %v", args)
+}
+
+func (f *fakeClaimGH) waitForConcurrentViews() {
+	f.mu.Lock()
+	if f.barrier == nil {
+		f.mu.Unlock()
+		return
+	}
+	f.barrierCount++
+	barrier := f.barrier
+	if f.barrierCount == f.barrierTarget {
+		close(f.barrier)
+		f.barrier = nil
+	}
+	f.mu.Unlock()
+	<-barrier
+}
+
+func (f *fakeClaimGH) applyLabelArguments(args []string) {
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "--add-label":
+			f.labels[args[i+1]] = true
+			i++
+		case "--remove-label":
+			delete(f.labels, args[i+1])
+			i++
+		}
+	}
+}
+
+func (f *fakeClaimGH) hasLabel(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.labels[name]
+}
+
+func (f *fakeClaimGH) labelNames() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.labelNamesLocked()
+}
+
+func (f *fakeClaimGH) labelNamesLocked() []string {
+	var names []string
+	for name, present := range f.labels {
+		if present {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func (f *fakeClaimGH) resetToReady() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.labels = map[string]bool{config.Default().Issue.ReadyLabel: true}
+}
+
+func withClaimRunner(t *testing.T, runner func(context.Context, string, string, ...string) (string, error)) {
+	t.Helper()
+	original := claimRun
+	originalBody := claimRunWithBodyFile
+	claimRun = runner
+	claimRunWithBodyFile = func(ctx context.Context, repo, _ string, args ...string) (string, error) {
+		return runner(ctx, repo, "gh", args...)
+	}
+	t.Cleanup(func() {
+		claimRun = original
+		claimRunWithBodyFile = originalBody
+	})
+}
+
+func newClaimRemote(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	repo := filepath.Join(root, "first")
+	gitOutput(t, root, "init", "--bare", remote)
+	gitOutput(t, root, "init", "-b", "main", repo)
+	configureTestGit(t, repo)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("claim test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOutput(t, repo, "add", "README.md")
+	gitOutput(t, repo, "commit", "-m", "initial")
+	gitOutput(t, repo, "remote", "add", "origin", remote)
+	gitOutput(t, repo, "push", "-u", "origin", "main")
+	gitOutput(t, remote, "--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	return remote, repo
+}
+
+func cloneClaimRepo(t *testing.T, remote, name string) string {
+	t.Helper()
+	repo := filepath.Join(t.TempDir(), name)
+	gitOutput(t, filepath.Dir(repo), "clone", remote, repo)
+	configureTestGit(t, repo)
+	return repo
+}
+
+func configureTestGit(t *testing.T, repo string) {
+	t.Helper()
+	gitOutput(t, repo, "config", "user.name", "GIA Test")
+	gitOutput(t, repo, "config", "user.email", "gia@example.invalid")
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func nonemptyLines(value string) []string {
+	var lines []string
+	for _, line := range strings.Split(value, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func containsLine(lines []string, want string) bool {
+	for _, line := range lines {
+		if line == want {
 			return true
 		}
 	}

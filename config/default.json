@@ -22,6 +22,7 @@
       "full": ["git diff --check", "go test ./...", "go vet ./..."],
       "release": ["git diff --check", "go test ./...", "go vet ./..."]
     },
+    "remote": "origin",
     "requireClean": true,
     "requireExpectedHead": true
   },
@@ -29,6 +30,12 @@
     "branches": ["main", "master", "release/*"],
     "paths": [".github/workflows/**", ".gitmodules", "**/go.mod", "**/package-lock.json"],
     "rejectForcePush": true
+  },
+  "permissions": {
+    "allowedExecutors": ["*"],
+    "approvalPrincipals": ["user"],
+    "mergePrincipals": ["user"],
+    "releasePrincipals": ["user"]
   },
   "notifications": {
     "console": true,
