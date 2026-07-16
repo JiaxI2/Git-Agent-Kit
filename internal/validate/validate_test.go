@@ -53,6 +53,23 @@ func TestRunRejectsStaleRemoteHead(t *testing.T) {
 	}
 }
 
+func TestRunBindsExpectedHeadToBranchUpstream(t *testing.T) {
+	_, repo, cfg := newValidationRepo(t, "origin")
+	writeCommit(t, repo, "feature.txt", "first\n", "first feature")
+	stale := validationGit(t, repo, "rev-parse", "HEAD")
+	validationGit(t, repo, "push", "-u", "origin", "verify/test")
+	validationGit(t, repo, "push", "origin", stale+":refs/heads/archive")
+	writeCommit(t, repo, "feature.txt", "second\n", "advance feature")
+	validationGit(t, repo, "push", "origin", "verify/test")
+	validationGit(t, repo, "branch", "verify/stale-upstream", stale)
+	validationGit(t, repo, "checkout", "verify/stale-upstream")
+	validationGit(t, repo, "branch", "--set-upstream-to=origin/verify/test")
+
+	if _, err := Run(context.Background(), repo, "test", stale, cfg); err == nil || !strings.Contains(err.Error(), "validation upstream") {
+		t.Fatalf("Run() cross-ref stale HEAD error = %v", err)
+	}
+}
+
 func TestRunRejectsProtectedPath(t *testing.T) {
 	_, repo, cfg := newValidationRepo(t, "origin")
 	path := filepath.Join(repo, ".github", "workflows", "ci.yml")

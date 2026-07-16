@@ -94,7 +94,8 @@ Windows：
 - 模拟断网、过期认证、远端分支已存在、PR 被更新。
 - 尝试删除脏 worktree。
 - 修改 protected path，确认风险升级流程和人工门禁。
-- 子模块 dirty、未推送 commit、远端 PR head 前移后的旧 SHA、detached HEAD。
+- 子模块 dirty、未推送 commit、远端 PR head 前移后的旧 SHA、旧 SHA 同时是
+  另一远端 ref tip 的交叉引用场景、detached HEAD。
 
 ### T4 用户体验测试
 

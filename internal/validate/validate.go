@@ -26,6 +26,7 @@ type Report struct {
 	Head         string `json:"head"`
 	ExpectedHead string `json:"expectedHead,omitempty"`
 	Remote       string `json:"remote"`
+	RemoteRef    string `json:"remoteRef"`
 	CleanBefore  bool   `json:"cleanBefore"`
 	CleanAfter   bool   `json:"cleanAfter"`
 	OS           string `json:"os"`
@@ -60,13 +61,6 @@ func Run(ctx context.Context, repo, profile, expected string, cfg config.Config)
 	if _, err := gitx.Run(ctx, repo, "fetch", "--prune", remote); err != nil {
 		return Report{}, fmt.Errorf("fetch validation remote %q: %w", remote, err)
 	}
-	remoteRefs, err := gitx.Run(ctx, repo, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/"+remote+"/")
-	if err != nil {
-		return Report{}, fmt.Errorf("inspect validation remote refs: %w", err)
-	}
-	if !remoteRefAtHead(remoteRefs, canonicalExpected) {
-		return Report{}, fmt.Errorf("expected HEAD %s is not the current tip of any fetched %q remote ref; push the commit or refresh the validation worktree", canonicalExpected, remote)
-	}
 	branch, err := gitx.Branch(ctx, repo)
 	if err != nil {
 		return Report{}, err
@@ -76,6 +70,10 @@ func Run(ctx context.Context, repo, profile, expected string, cfg config.Config)
 	}
 	if config.MatchAny(cfg.Protected.Branches, branch) {
 		return Report{}, fmt.Errorf("validation branch %q matches protected.branches", branch)
+	}
+	remoteRef, err := validationRemoteRef(ctx, repo, remote, canonicalExpected)
+	if err != nil {
+		return Report{}, err
 	}
 	protected, err := protectedChanges(ctx, repo, remote+"/"+cfg.DefaultBranch, canonicalExpected, cfg.Protected.Paths)
 	if err != nil {
@@ -91,7 +89,7 @@ func Run(ctx context.Context, repo, profile, expected string, cfg config.Config)
 	if cfg.Validation.RequireClean && !cleanBefore {
 		return Report{}, fmt.Errorf("repository is dirty before validation")
 	}
-	report := Report{OK: true, Profile: profile, Head: head, ExpectedHead: expected, Remote: remote, CleanBefore: cleanBefore, OS: runtime.GOOS, Arch: runtime.GOARCH}
+	report := Report{OK: true, Profile: profile, Head: head, ExpectedHead: expected, Remote: remote, RemoteRef: remoteRef, CleanBefore: cleanBefore, OS: runtime.GOOS, Arch: runtime.GOARCH}
 	for _, c := range cmds {
 		start := time.Now()
 		out, e := shell(ctx, repo, c)
@@ -116,14 +114,47 @@ func Run(ctx context.Context, repo, profile, expected string, cfg config.Config)
 	return report, nil
 }
 
-func remoteRefAtHead(refs, expected string) bool {
+func validationRemoteRef(ctx context.Context, repo, remote, expected string) (string, error) {
+	upstream, upstreamErr := gitx.Run(ctx, repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	if upstreamErr == nil {
+		upstream = strings.TrimSpace(upstream)
+		if !strings.HasPrefix(upstream, remote+"/") {
+			return "", fmt.Errorf("branch upstream %q is not on validation remote %q", upstream, remote)
+		}
+		upstreamHead, err := gitx.Run(ctx, repo, "rev-parse", "--verify", upstream+"^{commit}")
+		if err != nil {
+			return "", fmt.Errorf("resolve validation upstream %q: %w", upstream, err)
+		}
+		if upstreamHead != expected {
+			return "", fmt.Errorf("expected HEAD %s is not the current tip %s of validation upstream %q; refresh the validation worktree", expected, upstreamHead, upstream)
+		}
+		return upstream, nil
+	}
+
+	refs, err := gitx.Run(ctx, repo, "for-each-ref", "--format=%(objectname) %(refname:short)", "refs/remotes/"+remote+"/")
+	if err != nil {
+		return "", fmt.Errorf("inspect validation remote refs: %w", err)
+	}
+	matches := remoteRefsAtHead(refs, expected)
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("expected HEAD %s is not the current tip of any fetched %q remote ref; push the commit or refresh the validation worktree", expected, remote)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("expected HEAD %s matches multiple %q remote refs (%s); set the local branch upstream explicitly before validation", expected, remote, strings.Join(matches, ", "))
+	}
+}
+
+func remoteRefsAtHead(refs, expected string) []string {
+	var matches []string
 	for _, line := range strings.Split(refs, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[0] == expected {
-			return true
+			matches = append(matches, fields[1])
 		}
 	}
-	return false
+	return matches
 }
 
 func protectedChanges(ctx context.Context, repo, base, head string, patterns []string) ([]string, error) {

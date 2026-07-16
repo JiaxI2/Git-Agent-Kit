@@ -41,7 +41,9 @@ YAML 解析使用 YAML 官方组织维护的
 `validation.remote` 指定 Claim 创建分支和 validation fetch/远端 SHA 门禁使用的
 Git remote，默认是 `origin`。为兼容 0.1.0 配置，缺失或空值也按 `origin` 处理。
 expected SHA 必须等于该 remote 某个已 fetch tracking ref 的当前 tip；仅存在于
-本地或只是远端分支祖先都不满足门禁。
+本地或只是远端分支祖先都不满足门禁。当前分支存在 upstream 时，expected SHA
+还必须精确等于该 upstream 的 tip；不能借用另一个远端分支上相同 SHA 冒充当前
+PR/ref。没有 upstream 时只接受唯一匹配的远端 ref，多 ref 歧义会失败关闭。
 
 C/C++ 示例：
 

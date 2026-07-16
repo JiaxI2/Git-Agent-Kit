@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **fix(github)**: 折叠多行 direction 的标题空白；Issue dispatch 对同一 Issue 串行执行并 upsert 单一分类评论，避免 opened/labeled 重复评论和 risk label/评论冲突。
+- **security**: validation 优先绑定当前分支 upstream；没有 upstream 时仅接受唯一远端 ref tip，拒绝用其他 ref 上相同 SHA 冒充当前 PR/ref。
 - **feat**: 增加 `init --format json|yaml|yml`、严格 unknown-field 配置解析和
   required commands 的显式 `--config` 加载。
 - **feat**: 增加 `gia pr request`，仅允许已认领且 executor 匹配的 Issue 在
