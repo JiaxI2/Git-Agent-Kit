@@ -4,6 +4,11 @@ on:
   issues:
     types: [opened, labeled]
   workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Optional ready Issue number to classify
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -11,17 +16,52 @@ permissions:
 
 jobs:
   classify:
-    if: contains(github.event.issue.labels.*.name, 'agent:ready')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.issue.labels.*.name, 'agent:ready')
     runs-on: ubuntu-latest
     steps:
       - name: Guardrail summary
         uses: actions/github-script@v7
+        env:
+          GIA_ISSUE_NUMBER: ${{ inputs.issue_number }}
         with:
           script: |
-            const issue = context.payload.issue;
+            let issue = context.payload.issue;
+            if (context.eventName === 'workflow_dispatch') {
+              const raw = (process.env.GIA_ISSUE_NUMBER || '').trim();
+              if (!raw) {
+                await core.summary
+                  .addHeading('GIA manual dispatch')
+                  .addRaw('No Issue number was supplied. No repository or Issue state was changed.')
+                  .write();
+                core.notice('Manual dispatch completed without an Issue. Supply issue_number to classify a ready Issue.');
+                return;
+              }
+              if (!/^[1-9][0-9]*$/.test(raw)) {
+                core.setFailed(`Invalid issue_number: ${raw}`);
+                return;
+              }
+              const response = await github.rest.issues.get({
+                ...context.repo,
+                issue_number: Number(raw)
+              });
+              issue = response.data;
+              const manualLabels = issue.labels.map(x => typeof x === 'string' ? x : x.name);
+              if (!manualLabels.includes('agent:ready')) {
+                await core.summary
+                  .addHeading('GIA manual dispatch')
+                  .addRaw(`Issue #${issue.number} is not labeled agent:ready. No state was changed.`)
+                  .write();
+                core.notice(`Issue #${issue.number} is not ready; classification skipped.`);
+                return;
+              }
+            }
+            if (!issue) {
+              core.setFailed('The event did not provide an Issue payload.');
+              return;
+            }
             const highRiskWords = /release|secret|token|permission|workflow|submodule|删除|发布|权限|密钥/i;
             const high = highRiskWords.test(`${issue.title}\n${issue.body || ''}`);
-            const labels = issue.labels.map(x => x.name);
+            const labels = issue.labels.map(x => typeof x === 'string' ? x : x.name);
             if (!labels.some(x => x.startsWith('risk:'))) {
               await github.rest.issues.addLabels({
                 ...context.repo,

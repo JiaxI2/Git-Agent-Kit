@@ -17,16 +17,20 @@
 
 ```powershell
 .\scripts\bootstrap.ps1
-.\bin\gia.exe init --repo C:\path\to\repo
-.\bin\gia.exe doctor --repo C:\path\to\repo
+$env:PATH = "$(Resolve-Path .\bin);$env:PATH"
+gia help
+gia init --repo C:\path\to\repo
+gia doctor --repo C:\path\to\repo
 ```
 
 ### Linux/macOS
 
 ```bash
 ./scripts/bootstrap.sh
-./bin/gia init --repo /path/to/repo
-./bin/gia doctor --repo /path/to/repo
+export PATH="$(pwd)/bin:$PATH"
+gia help
+gia init --repo /path/to/repo
+gia doctor --repo /path/to/repo
 ```
 
 目标仓库需要安装并登录：
@@ -34,6 +38,8 @@
 ```bash
 gh auth login
 ```
+
+`init` 成功后会明确列出下一步：检查 `.gia/config.json`，然后选择将 `.gia/` 提交给团队，或将其加入目标仓库的 `.gitignore`；随后运行 `doctor`。
 
 ## 傻瓜式使用
 
@@ -53,9 +59,12 @@ GIA 自动：
 Agent 获取任务：
 
 ```powershell
+gia issue list --repo F:\Project\Demo
 gia scan --repo F:\Project\Demo
 gia claim --repo F:\Project\Demo --issue 123 --executor web-agent
 ```
+
+`issue list` 与 `scan` 都查询打开且带有 `.gia/config.json` 中 `issue.readyLabel` 的 Issue。若结果为空，JSON 输出仍保留 `data: []`，并在 `guidance` 中给出实际查询条件、常见原因和恢复建议。
 
 本地 Codex 隔离验证：
 
@@ -81,9 +90,11 @@ gia feedback --repo F:\Project\Demo --category ux --message "worktree 路径提�
 
 | 命令 | 用途 |
 |---|---|
+| `help` / `--help` | 查看顶层或指定命令帮助 |
 | `init` | 在目标仓库生成 `.gia/config.json` |
 | `doctor` | 检查 Git、GitHub CLI、Go、认证和配置 |
 | `issue create` | 从一句优化方向创建结构化 Issue |
+| `issue list` | 列出打开且带有 ready 标签的 Issue |
 | `scan` | 查找 `agent:ready` Issue |
 | `claim` | 认领 Issue、创建并推送独立分支、更新标签 |
 | `worktree create/remove` | 创建或安全移除隔离验证目录 |
@@ -96,6 +107,13 @@ gia feedback --repo F:\Project\Demo --category ux --message "worktree 路径提�
 ## 自动执行模式
 
 `.github/workflows/gia-agent-dispatch.yml` 提供安全的 Issue 检测入口。默认仅分类和产生执行请求，不授予任意代码写权限。实际云端 Agent 可通过 GitHub App、ChatGPT/Codex 云任务或其他执行器读取 `agent:ready` Issue。
+
+手工触发时，`issue_number` 是可选输入。未提供编号时，工作流只输出安全摘要并成功结束，不读取不存在的 Issue payload，也不修改仓库或 Issue 状态；提供编号时，仅处理带有 `agent:ready` 标签的 Issue。
+
+```powershell
+gh workflow run gia-agent-dispatch.yml
+gh workflow run gia-agent-dispatch.yml -f issue_number=123
+```
 
 推荐自动化等级：
 

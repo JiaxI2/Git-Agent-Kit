@@ -41,14 +41,15 @@ Windows：
 7. 在 worktree 制造脏文件，确认删除被拒绝；
 8. 使用错误 SHA 验证，确认失败关闭；
 9. 使用正确 SHA 执行 smoke；
-10. 清理全部临时资源。
+10. 删除操作仅接受已验证位于测试临时根内的绝对路径，并经过 `ShouldProcess`；
+11. 清理全部临时资源。
 
 ### T2 GitHub 测试仓库
 
 在专用测试仓库执行：
 
 - 一句话创建 Issue；
-- `scan` 检测；
+- `issue list` 和 `scan` 检测；
 - `claim` 标签迁移和分支创建；
 - 云端 Agent 创建 Draft PR；
 - `handoff` 评论生成；
@@ -77,6 +78,14 @@ Windows：
 3. 收到完成通知。
 
 记录：成功率、操作次数、失败信息可理解性、从 Issue 到 Draft PR 的人工干预次数。
+
+必须同时验证：
+
+1. `gia help`、`gia --help`、`gia <command> --help` 和嵌套命令帮助返回 0；
+2. `init` 输出明确提示检查 `.gia/config.json`，并选择提交或忽略 `.gia/`；
+3. 空 `issue list` / `scan` 保持 `data: []`，同时报告 `state`、ready label、limit、可能原因和恢复建议；
+4. `workflow_dispatch` 无 `issue_number` 时成功结束且不修改状态；有编号时只处理 `agent:ready` Issue；
+5. Windows 快速开始中的命令在同一 PowerShell 会话可直接复制执行。
 
 ## 反馈闭环
 

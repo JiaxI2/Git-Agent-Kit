@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/example/git-isolated-agent-kit/internal/config"
 	"github.com/example/git-isolated-agent-kit/internal/gitx"
@@ -22,10 +21,24 @@ import (
 const version = "0.1.0"
 
 type output struct {
-	OK      bool        `json:"ok"`
-	Command string      `json:"command"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	OK       bool        `json:"ok"`
+	Command  string      `json:"command"`
+	Data     interface{} `json:"data,omitempty"`
+	Guidance *guidance   `json:"guidance,omitempty"`
+	Error    string      `json:"error,omitempty"`
+}
+
+type guidance struct {
+	Summary         string                 `json:"summary"`
+	Query           map[string]interface{} `json:"query,omitempty"`
+	PossibleReasons []string               `json:"possibleReasons,omitempty"`
+	NextSteps       []string               `json:"nextSteps,omitempty"`
+}
+
+type initData struct {
+	Repo      string   `json:"repo"`
+	Config    string   `json:"config"`
+	NextSteps []string `json:"nextSteps"`
 }
 
 func main() {
@@ -39,6 +52,9 @@ func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		usage()
 		return nil
+	}
+	if path, ok := requestedHelp(args); ok {
+		return showHelp(path)
 	}
 	switch args[0] {
 	case "version":
@@ -85,7 +101,19 @@ func cmdInit(args []string) error {
 	if err := workflow.Initialize(abs, *force); err != nil {
 		return err
 	}
-	emit(output{OK: true, Command: "init", Data: map[string]string{"repo": abs, "config": filepath.Join(abs, ".gia", "config.json")}})
+	emit(output{
+		OK:      true,
+		Command: "init",
+		Data: initData{
+			Repo:   abs,
+			Config: filepath.Join(abs, ".gia", "config.json"),
+			NextSteps: []string{
+				"检查 .gia/config.json，并按目标仓库技术栈调整验证命令。",
+				"若团队共享配置：git add .gia && git commit；若仅本地使用：将 .gia/ 加入 .gitignore。",
+				"运行 gia doctor --repo <repository> 检查 Git、GitHub CLI、认证和配置。",
+			},
+		},
+	})
 	return nil
 }
 
@@ -104,8 +132,14 @@ func cmdDoctor(ctx context.Context, args []string) error {
 }
 
 func cmdIssue(ctx context.Context, args []string) error {
-	if len(args) == 0 || args[0] != "create" {
-		return errors.New("usage: gia issue create --direction <text>")
+	if len(args) == 0 {
+		return errors.New("usage: gia issue create|list")
+	}
+	if args[0] == "list" {
+		return cmdIssueList(ctx, args[1:])
+	}
+	if args[0] != "create" {
+		return errors.New("usage: gia issue create|list")
 	}
 	fs := flag.NewFlagSet("issue create", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
@@ -137,11 +171,22 @@ func cmdIssue(ctx context.Context, args []string) error {
 }
 
 func cmdScan(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	return listIssues(ctx, args, "scan")
+}
+
+func cmdIssueList(ctx context.Context, args []string) error {
+	return listIssues(ctx, args, "issue list")
+}
+
+func listIssues(ctx context.Context, args []string, command string) error {
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
 	limit := fs.Int("limit", 20, "maximum issues")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *limit <= 0 {
+		return errors.New("--limit must be greater than zero")
 	}
 	cfg, err := config.LoadFromRepo(*repo)
 	if err != nil {
@@ -151,8 +196,33 @@ func cmdScan(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	emit(output{OK: true, Command: "scan", Data: items})
+	emit(issueListOutput(command, items, cfg, *limit))
 	return nil
+}
+
+func issueListOutput(command string, items []issue.Item, cfg config.Config, limit int) output {
+	result := output{OK: true, Command: command, Data: items}
+	if len(items) == 0 {
+		result.Guidance = &guidance{
+			Summary: "没有找到可认领的 Issue。",
+			Query: map[string]interface{}{
+				"state": "open",
+				"label": cfg.Issue.ReadyLabel,
+				"limit": limit,
+			},
+			PossibleReasons: []string{
+				"仓库当前没有打开且带有 ready 标签的 Issue。",
+				"Issue 使用了不同的 ready 标签，或已被认领/关闭。",
+				"当前 gh 登录账号无权读取目标仓库 Issue。",
+			},
+			NextSteps: []string{
+				"运行 gia issue create --repo <repository> --direction <text> 创建任务。",
+				"在 GitHub 检查 Issue 状态和标签，或核对 .gia/config.json 的 issue.readyLabel。",
+				"运行 gia doctor --repo <repository> 检查 GitHub CLI 与认证。",
+			},
+		}
+	}
+	return result
 }
 
 func cmdClaim(ctx context.Context, args []string) error {
@@ -324,9 +394,10 @@ func usage() {
 	fmt.Printf(`gia %s - Git Isolated Agent Kit
 
 Commands:
+  help       show top-level or command-specific help
   init       initialize .gia in a repository
   doctor     check dependencies and repository safety
-  issue      create a structured GitHub issue from one direction
+  issue      create or list structured GitHub issues
   scan       find executable agent issues
   claim      atomically claim an issue and prepare a branch
   worktree   create/remove isolated validation worktrees
@@ -336,6 +407,63 @@ Commands:
   feedback   record iterative kit feedback
   notify     send configured notifications
   version    print version
+
+Run "gia help <command>" or "gia <command> --help" for command usage.
 `, version)
-	_ = time.Second
+}
+
+func requestedHelp(args []string) ([]string, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+	if isHelpToken(args[0]) {
+		return nil, true
+	}
+	if args[0] == "help" {
+		return args[1:], true
+	}
+	if len(args) >= 2 && isHelpToken(args[1]) {
+		return args[:1], true
+	}
+	if len(args) >= 3 && (args[0] == "issue" || args[0] == "worktree") && isHelpToken(args[2]) {
+		return args[:2], true
+	}
+	return nil, false
+}
+
+func isHelpToken(arg string) bool {
+	return arg == "--help" || arg == "-h"
+}
+
+func showHelp(path []string) error {
+	if len(path) == 0 {
+		usage()
+		return nil
+	}
+	key := strings.Join(path, " ")
+	text, ok := commandHelp[key]
+	if !ok {
+		return fmt.Errorf("unknown help topic %q", key)
+	}
+	fmt.Print(text)
+	return nil
+}
+
+var commandHelp = map[string]string{
+	"init":            "Usage: gia init [--repo <path>] [--force]\nInitialize .gia configuration and templates in a repository.\n",
+	"doctor":          "Usage: gia doctor [--repo <path>]\nCheck Git, GitHub CLI, Go, repository, authentication, and GIA configuration.\n",
+	"issue":           "Usage: gia issue create|list\nCreate a structured task Issue or list ready Issues.\n",
+	"issue create":    "Usage: gia issue create [--repo <path>] --direction <text> [--risk auto|low|medium|high] [--executor <name>] [--dry-run]\n",
+	"issue list":      "Usage: gia issue list [--repo <path>] [--limit <count>]\nList open Issues carrying the configured ready label.\n",
+	"scan":            "Usage: gia scan [--repo <path>] [--limit <count>]\nFind open Issues carrying the configured ready label.\n",
+	"claim":           "Usage: gia claim [--repo <path>] --issue <number> [--executor <name>]\n",
+	"worktree":        "Usage: gia worktree create|remove\nCreate or safely remove an isolated validation worktree.\n",
+	"worktree create": "Usage: gia worktree create [--repo <path>] (--pr <number> | --ref <remote-ref>) [--root <path>]\n",
+	"worktree remove": "Usage: gia worktree remove [--repo <path>] --path <worktree-path> [--force]\n",
+	"validate":        "Usage: gia validate [--repo <path>] [--profile smoke|full|release] [--expected-head <sha>]\n",
+	"handoff":         "Usage: gia handoff [--repo <path>] --pr <number> --to <executor> --state <state> [--note <text>]\n",
+	"status":          "Usage: gia status [--repo <path>]\nShow branch, HEAD, cleanliness, and worktree state.\n",
+	"feedback":        "Usage: gia feedback [--repo <path>] [--category bug|improvement|ux|security] --message <text> [--pr <number>]\n",
+	"notify":          "Usage: gia notify [--repo <path>] [--event <name>] [--message <text>]\n",
+	"version":         "Usage: gia version\nPrint the GIA Kit version.\n",
 }
