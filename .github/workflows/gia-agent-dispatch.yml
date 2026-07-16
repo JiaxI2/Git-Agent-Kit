@@ -14,6 +14,10 @@ permissions:
   contents: read
   issues: write
 
+concurrency:
+  group: gia-classify-${{ github.repository }}-${{ github.event.issue.number || inputs.issue_number || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   classify:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.issue.labels.*.name, 'agent:ready')
@@ -59,20 +63,55 @@ jobs:
               core.setFailed('The event did not provide an Issue payload.');
               return;
             }
-            const highRiskWords = /release|secret|token|permission|workflow|submodule|删除|发布|权限|密钥/i;
-            const high = highRiskWords.test(`${issue.title}\n${issue.body || ''}`);
+            const marker = '<!-- GIA:CLASSIFICATION -->';
             const labels = issue.labels.map(x => typeof x === 'string' ? x : x.name);
-            if (!labels.some(x => x.startsWith('risk:'))) {
+            let riskLabel = labels.find(x => x.startsWith('risk:'));
+            if (!riskLabel) {
+              const body = issue.body || '';
+              const taskRisk = body.match(/<!-- GIA:TASK:START -->[\s\S]*?^risk:\s*(low|medium|high)\s*$/im);
+              const formRisk = body.match(/(?:^|\n)###?\s*(?:预估风险|risk)\s*\n+\s*(低|中|高|low|medium|high)\s*(?:\n|$)/i);
+              const riskMap = {低: 'low', 中: 'medium', 高: 'high'};
+              let risk = taskRisk?.[1]?.toLowerCase();
+              if (!risk && formRisk?.[1]) {
+                risk = riskMap[formRisk[1]] || formRisk[1].toLowerCase();
+              }
+              if (!risk || risk === '自动判断') {
+                const direction =
+                  body.match(/##\s*背景与方向\s*\n([\s\S]*?)(?=\n##\s|$)/)?.[1] ||
+                  body.match(/###\s*优化方向\s*\n([\s\S]*?)(?=\n###\s|$)/)?.[1] ||
+                  '';
+                const highRiskWords = /release|secret|token|permission|workflow|submodule|删除|发布|权限|密钥/i;
+                risk = highRiskWords.test(`${issue.title}\n${direction}`) ? 'high' : 'low';
+              }
+              riskLabel = `risk:${risk}`;
               await github.rest.issues.addLabels({
                 ...context.repo,
                 issue_number: issue.number,
-                labels: [high ? 'risk:high' : 'risk:low']
+                labels: [riskLabel]
               });
             }
-            await github.rest.issues.createComment({
+            const high = riskLabel === 'risk:high';
+            const commentBody = `${marker}\n${high
+              ? 'GIA 已识别为高风险任务。需要人工批准后才允许 Agent 认领；本工作流不会执行 Issue 正文中的任何命令。'
+              : `GIA 已确认 ${riskLabel} 分类。执行器可通过受控 claim 流程认领；本工作流不会执行 Issue 正文中的任何命令。`}`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
               ...context.repo,
               issue_number: issue.number,
-              body: high
-                ? 'GIA 已识别为高风险任务。需要人工批准后才允许 Agent 认领；本工作流不会执行 Issue 正文中的任何命令。'
-                : 'GIA 已完成低风险初步分类。执行器可通过受控 claim 流程认领；本工作流不会执行 Issue 正文中的任何命令。'
+              per_page: 100
             });
+            const existing = comments.find(comment => (comment.body || '').includes(marker));
+            if (existing) {
+              if (existing.body !== commentBody) {
+                await github.rest.issues.updateComment({
+                  ...context.repo,
+                  comment_id: existing.id,
+                  body: commentBody
+                });
+              }
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issue.number,
+                body: commentBody
+              });
+            }

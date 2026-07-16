@@ -423,7 +423,7 @@ func labelStyle(label string) (string, string) {
 }
 
 func compactTitle(s string) string {
-	r := []rune(strings.TrimSpace(s))
+	r := []rune(strings.Join(strings.Fields(s), " "))
 	if len(r) > 70 {
 		r = r[:70]
 	}

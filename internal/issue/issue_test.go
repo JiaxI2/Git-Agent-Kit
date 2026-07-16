@@ -23,6 +23,20 @@ func TestFromDirection(t *testing.T) {
 	}
 }
 
+func TestFromDirectionCollapsesMultilineTitle(t *testing.T) {
+	cfg := config.Default()
+	spec := FromDirection("第一行方向\n\n第二行说明\t保留正文", "low", "web-agent", cfg)
+	if strings.ContainsAny(spec.Title, "\r\n\t") {
+		t.Fatalf("title contains control whitespace: %q", spec.Title)
+	}
+	if spec.Title != "[Agent] 第一行方向 第二行说明 保留正文" {
+		t.Fatalf("title=%q", spec.Title)
+	}
+	if !strings.Contains(spec.Body, "第一行方向\n\n第二行说明\t保留正文") {
+		t.Fatalf("body did not preserve direction whitespace:\n%s", spec.Body)
+	}
+}
+
 func TestCreateBootstrapsLabelsPreservesBodyAndVerifiesIssue(t *testing.T) {
 	cfg := config.Default()
 	spec := FromDirection("收敛安装\n并验证完整正文", "low", "web-agent", cfg)
