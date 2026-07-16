@@ -1,15 +1,15 @@
 package issue
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"regexp"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/example/git-isolated-agent-kit/internal/config"
+	"github.com/example/git-isolated-agent-kit/internal/githubx"
 )
 
 type Spec struct {
@@ -30,6 +30,23 @@ type Item struct {
 	URL    string   `json:"url"`
 	Labels []string `json:"labels"`
 }
+type ListOptions struct {
+	State  string
+	Labels []string
+	Limit  int
+}
+
+type issueRecord struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+var runGitHub = githubx.Run
+var runGitHubWithBodyFile = githubx.RunWithBodyFile
 
 func FromDirection(direction, risk, executor string, cfg config.Config) Spec {
 	d := strings.TrimSpace(direction)
@@ -80,48 +97,112 @@ func Create(ctx context.Context, repo string, spec Spec, cfg config.Config) (Cre
 	if err != nil {
 		return Created{}, err
 	}
-	args := []string{"issue", "create", "--repo", full, "--title", spec.Title, "--body", spec.Body}
-	for _, l := range spec.Labels {
-		args = append(args, "--label", l)
-	}
-	out, err := gh(ctx, repo, args...)
+	attachedLabels, err := normalizeLabels(spec.Labels)
 	if err != nil {
 		return Created{}, err
 	}
-	url := strings.TrimSpace(out)
-	re := regexp.MustCompile(`/issues/(\d+)$`)
-	m := re.FindStringSubmatch(url)
-	n := 0
-	if len(m) == 2 {
-		fmt.Sscanf(m[1], "%d", &n)
+	bootstrapLabels, err := normalizeLabels(append([]string{
+		cfg.Issue.ReadyLabel,
+		cfg.Issue.ClaimedLabel,
+		cfg.Issue.CompletedLabel,
+	}, attachedLabels...))
+	if err != nil {
+		return Created{}, err
 	}
-	return Created{Number: n, URL: url, Title: spec.Title}, nil
+	if err := ensureLabels(ctx, repo, full, bootstrapLabels); err != nil {
+		return Created{}, err
+	}
+
+	args := []string{"issue", "create", "--repo", full, "--title", spec.Title}
+	for _, l := range attachedLabels {
+		args = append(args, "--label", l)
+	}
+	out, err := runGitHubWithBodyFile(ctx, repo, spec.Body, args...)
+	if err != nil {
+		return Created{}, err
+	}
+	number, err := issueNumberFromURL(out)
+	if err != nil {
+		return Created{}, fmt.Errorf("parse created issue: %w", err)
+	}
+	createdURL := strings.TrimSpace(out)
+	record, err := viewIssue(ctx, repo, full, number)
+	if err != nil {
+		return Created{}, fmt.Errorf("issue may have been created at %s, but verification failed: %w", createdURL, err)
+	}
+	if err := requireLabels(record.Labels, attachedLabels); err != nil {
+		return Created{}, fmt.Errorf("issue may have been created at %s, but verification failed: %w", createdURL, err)
+	}
+	return Created{Number: record.Number, URL: record.URL, Title: record.Title}, nil
 }
 
 func Scan(ctx context.Context, repo string, limit int, cfg config.Config) ([]Item, error) {
+	return ListReady(ctx, repo, limit, cfg)
+}
+
+func ListReady(ctx context.Context, repo string, limit int, cfg config.Config) ([]Item, error) {
+	if strings.TrimSpace(cfg.Issue.ReadyLabel) == "" {
+		return nil, fmt.Errorf("issue.readyLabel is required")
+	}
+	return List(ctx, repo, ListOptions{State: "open", Labels: []string{cfg.Issue.ReadyLabel}, Limit: limit})
+}
+
+func List(ctx context.Context, repo string, opts ListOptions) ([]Item, error) {
 	full, err := repoName(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
-	out, err := gh(ctx, repo, "issue", "list", "--repo", full, "--state", "open", "--label", cfg.Issue.ReadyLabel, "--limit", fmt.Sprint(limit), "--json", "number,title,url,labels")
+	state := strings.ToLower(strings.TrimSpace(opts.State))
+	if state == "" {
+		state = "open"
+	}
+	if state != "open" && state != "closed" && state != "all" {
+		return nil, fmt.Errorf("invalid issue state %q", opts.State)
+	}
+	if opts.Limit == 0 {
+		opts.Limit = 20
+	}
+	if opts.Limit < 0 {
+		return nil, fmt.Errorf("issue list limit must be positive")
+	}
+	labels, err := normalizeLabelsAllowEmpty(opts.Labels)
 	if err != nil {
 		return nil, err
 	}
-	var raw []struct {
-		Number     int `json:"number"`
-		Title, URL string
-		Labels     []struct {
-			Name string `json:"name"`
-		} `json:"labels"`
+	args := []string{"issue", "list", "--repo", full, "--state", state, "--limit", strconv.Itoa(opts.Limit), "--json", "number,title,url,labels"}
+	for _, label := range labels {
+		args = append(args, "--label", label)
 	}
-	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+	out, err := runGitHub(ctx, repo, args...)
+	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, fmt.Errorf("gh issue list returned empty output")
+	}
+	var raw []issueRecord
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("parse gh issue list output: %w", err)
 	}
 	items := make([]Item, 0, len(raw))
 	for _, r := range raw {
+		if r.Number <= 0 {
+			return nil, fmt.Errorf("gh issue list returned invalid issue number %d", r.Number)
+		}
+		urlNumber, err := issueNumberFromURL(r.URL)
+		if err != nil || urlNumber != r.Number {
+			return nil, fmt.Errorf("gh issue list returned invalid URL for issue #%d", r.Number)
+		}
+		if strings.TrimSpace(r.Title) == "" {
+			return nil, fmt.Errorf("gh issue list returned an empty title for issue #%d", r.Number)
+		}
 		labs := make([]string, 0, len(r.Labels))
 		for _, l := range r.Labels {
-			labs = append(labs, l.Name)
+			name := strings.TrimSpace(l.Name)
+			if name == "" {
+				return nil, fmt.Errorf("gh issue list returned an empty label for issue #%d", r.Number)
+			}
+			labs = append(labs, name)
 		}
 		items = append(items, Item{r.Number, r.Title, r.URL, labs})
 	}
@@ -129,20 +210,179 @@ func Scan(ctx context.Context, repo string, limit int, cfg config.Config) ([]Ite
 }
 
 func repoName(ctx context.Context, repo string) (string, error) {
-	out, err := gh(ctx, repo, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
-	return strings.TrimSpace(out), err
+	out, err := runGitHub(ctx, repo, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+	if err != nil {
+		return "", err
+	}
+	full := strings.TrimSpace(out)
+	parts := strings.Split(full, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", fmt.Errorf("gh repo view returned invalid nameWithOwner %q", full)
+	}
+	return full, nil
 }
 
-func gh(ctx context.Context, repo string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	cmd.Dir = repo
-	var out, stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+func ensureLabels(ctx context.Context, repo, full string, labels []string) error {
+	existing, err := repositoryLabels(ctx, repo, full)
+	if err != nil {
+		return err
 	}
-	return strings.TrimSpace(out.String()), nil
+	for _, label := range labels {
+		if existing[strings.ToLower(label)] {
+			continue
+		}
+		color, description := labelStyle(label)
+		if _, err := runGitHub(ctx, repo, "label", "create", label, "--repo", full, "--color", color, "--description", description); err != nil {
+			refreshed, refreshErr := repositoryLabels(ctx, repo, full)
+			if refreshErr == nil && refreshed[strings.ToLower(label)] {
+				existing = refreshed
+				continue
+			}
+			return fmt.Errorf("bootstrap GitHub label %q: %w", label, err)
+		}
+		existing[strings.ToLower(label)] = true
+	}
+	final, err := repositoryLabels(ctx, repo, full)
+	if err != nil {
+		return err
+	}
+	for _, label := range labels {
+		if !final[strings.ToLower(label)] {
+			return fmt.Errorf("GitHub label %q is still missing after bootstrap", label)
+		}
+	}
+	return nil
+}
+
+func repositoryLabels(ctx context.Context, repo, full string) (map[string]bool, error) {
+	out, err := runGitHub(ctx, repo, "label", "list", "--repo", full, "--limit", "1000", "--json", "name")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, fmt.Errorf("gh label list returned empty output")
+	}
+	var raw []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("parse gh label list output: %w", err)
+	}
+	labels := make(map[string]bool, len(raw))
+	for _, label := range raw {
+		name := strings.TrimSpace(label.Name)
+		if name == "" {
+			return nil, fmt.Errorf("gh label list returned an empty label name")
+		}
+		labels[strings.ToLower(name)] = true
+	}
+	return labels, nil
+}
+
+func viewIssue(ctx context.Context, repo, full string, number int) (issueRecord, error) {
+	out, err := runGitHub(ctx, repo, "issue", "view", strconv.Itoa(number), "--repo", full, "--json", "number,title,url,labels")
+	if err != nil {
+		return issueRecord{}, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return issueRecord{}, fmt.Errorf("gh issue view returned empty output")
+	}
+	var record issueRecord
+	if err := json.Unmarshal([]byte(out), &record); err != nil {
+		return issueRecord{}, fmt.Errorf("parse gh issue view output: %w", err)
+	}
+	if record.Number != number || record.Number <= 0 {
+		return issueRecord{}, fmt.Errorf("gh issue view returned issue #%d, expected #%d", record.Number, number)
+	}
+	urlNumber, err := issueNumberFromURL(record.URL)
+	if err != nil || urlNumber != number {
+		return issueRecord{}, fmt.Errorf("gh issue view returned invalid URL for issue #%d", number)
+	}
+	if strings.TrimSpace(record.Title) == "" {
+		return issueRecord{}, fmt.Errorf("gh issue view returned an empty title for issue #%d", number)
+	}
+	return record, nil
+}
+
+func issueNumberFromURL(raw string) (int, error) {
+	value := strings.TrimSpace(raw)
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return 0, fmt.Errorf("invalid issue URL %q", value)
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 4 || parts[len(parts)-2] != "issues" {
+		return 0, fmt.Errorf("invalid issue URL %q", value)
+	}
+	number, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil || number <= 0 {
+		return 0, fmt.Errorf("invalid issue URL %q", value)
+	}
+	return number, nil
+}
+
+func requireLabels(actual []struct {
+	Name string `json:"name"`
+}, required []string) error {
+	present := make(map[string]bool, len(actual))
+	for _, label := range actual {
+		present[strings.ToLower(strings.TrimSpace(label.Name))] = true
+	}
+	for _, label := range required {
+		if !present[strings.ToLower(label)] {
+			return fmt.Errorf("required label %q is not attached", label)
+		}
+	}
+	return nil
+}
+
+func normalizeLabels(labels []string) ([]string, error) {
+	normalized, err := normalizeLabelsAllowEmpty(labels)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("at least one GitHub label is required")
+	}
+	return normalized, nil
+}
+
+func normalizeLabelsAllowEmpty(labels []string) ([]string, error) {
+	seen := make(map[string]bool, len(labels))
+	normalized := make([]string, 0, len(labels))
+	for _, raw := range labels {
+		label := strings.TrimSpace(raw)
+		if label == "" {
+			return nil, fmt.Errorf("GitHub label must not be empty")
+		}
+		if len([]rune(label)) > 50 {
+			return nil, fmt.Errorf("GitHub label %q exceeds 50 characters", label)
+		}
+		key := strings.ToLower(label)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		normalized = append(normalized, label)
+	}
+	return normalized, nil
+}
+
+func labelStyle(label string) (string, string) {
+	switch {
+	case label == "agent:ready":
+		return "0E8A16", "Ready for a GIA executor"
+	case label == "agent:claimed":
+		return "FBCA04", "Claimed by a GIA executor"
+	case label == "agent:completed":
+		return "5319E7", "Completed through the GIA lifecycle"
+	case strings.HasPrefix(label, "risk:"):
+		return "D93F0B", "GIA risk classification"
+	case strings.HasPrefix(label, "executor:"):
+		return "1D76DB", "Preferred or current GIA executor"
+	default:
+		return "BFD4F2", "Managed by GIA"
+	}
 }
 
 func compactTitle(s string) string {

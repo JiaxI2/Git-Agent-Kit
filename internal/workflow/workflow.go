@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/example/git-isolated-agent-kit/internal/config"
+	"github.com/example/git-isolated-agent-kit/internal/githubx"
 	"github.com/example/git-isolated-agent-kit/internal/gitx"
 )
 
@@ -45,6 +46,32 @@ type HandoffResult struct {
 	State string `json:"state"`
 	Head  string `json:"head"`
 }
+type DraftPullRequestRequest struct {
+	Repo     string `json:"repo"`
+	Base     string `json:"base"`
+	Head     string `json:"head"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	Executor string `json:"executor"`
+}
+type DraftPullRequestResult struct {
+	Number   int    `json:"number"`
+	URL      string `json:"url"`
+	State    string `json:"state"`
+	Base     string `json:"base"`
+	Head     string `json:"head"`
+	Title    string `json:"title"`
+	Executor string `json:"executor"`
+}
+type draftPullRequestRecord struct {
+	Number      int    `json:"number"`
+	URL         string `json:"url"`
+	IsDraft     bool   `json:"isDraft"`
+	BaseRefName string `json:"baseRefName"`
+	HeadRefName string `json:"headRefName"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+}
 type StatusResult struct {
 	Repo      string `json:"repo"`
 	Branch    string `json:"branch"`
@@ -56,6 +83,9 @@ type FeedbackResult struct {
 	Path     string `json:"path"`
 	Category string `json:"category"`
 }
+
+var runGitHub = githubx.Run
+var runGitHubWithBodyFile = githubx.RunWithBodyFile
 
 func Initialize(repo string, force bool) error {
 	dir := filepath.Join(repo, ".gia")
@@ -130,7 +160,10 @@ func Claim(ctx context.Context, repo string, issue int, executor string, cfg con
 		return ClaimResult{}, err
 	}
 	_, _ = run(ctx, repo, "gh", "issue", "edit", fmt.Sprint(issue), "--repo", strings.TrimSpace(full), "--add-label", cfg.Issue.ClaimedLabel, "--remove-label", cfg.Issue.ReadyLabel, "--add-label", "executor:"+executor)
-	_, _ = run(ctx, repo, "gh", "issue", "comment", fmt.Sprint(issue), "--repo", strings.TrimSpace(full), "--body", fmt.Sprintf("GIA claimed this task.\n\n- executor: `%s`\n- branch: `%s`\n- base head: `%s`\n- state: `CLAIMED`", executor, branch, head))
+	comment := fmt.Sprintf("GIA claimed this task.\n\n- executor: `%s`\n- branch: `%s`\n- base head: `%s`\n- state: `CLAIMED`", executor, branch, head)
+	if _, err := runGitHubWithBodyFile(ctx, repo, comment, "issue", "comment", fmt.Sprint(issue), "--repo", strings.TrimSpace(full)); err != nil {
+		return ClaimResult{}, err
+	}
 	return ClaimResult{issue, branch, executor, "CLAIMED", head}, nil
 }
 
@@ -175,16 +208,156 @@ func CreateValidationWorktree(ctx context.Context, repo string, pr int, ref, roo
 }
 
 func Handoff(ctx context.Context, repo string, pr int, to, state, note string) (HandoffResult, error) {
-	head, err := run(ctx, repo, "gh", "pr", "view", fmt.Sprint(pr), "--json", "headRefOid", "--jq", ".headRefOid")
+	head, err := runGitHub(ctx, repo, "pr", "view", fmt.Sprint(pr), "--json", "headRefOid", "--jq", ".headRefOid")
 	if err != nil {
 		return HandoffResult{}, err
 	}
 	head = strings.TrimSpace(head)
+	if head == "" {
+		return HandoffResult{}, fmt.Errorf("gh pr view returned empty headRefOid for PR #%d", pr)
+	}
 	body := fmt.Sprintf("<!-- GIA:HANDOFF:START -->\nexecutor: %s\nstate: %s\nhead_sha: %s\nnext_executor: %s\nnote: %s\n<!-- GIA:HANDOFF:END -->", to, state, head, to, escapeLine(note))
-	if _, err := run(ctx, repo, "gh", "pr", "comment", fmt.Sprint(pr), "--body", body); err != nil {
+	if _, err := runGitHubWithBodyFile(ctx, repo, body, "pr", "comment", fmt.Sprint(pr)); err != nil {
 		return HandoffResult{}, err
 	}
 	return HandoffResult{pr, to, state, head}, nil
+}
+
+func RequestDraftPullRequest(ctx context.Context, request DraftPullRequestRequest) (DraftPullRequestResult, error) {
+	repo := strings.TrimSpace(request.Repo)
+	base := strings.TrimSpace(request.Base)
+	head := strings.TrimSpace(request.Head)
+	title := strings.TrimSpace(request.Title)
+	executor := strings.TrimSpace(request.Executor)
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{name: "repo", value: repo},
+		{name: "base", value: base},
+		{name: "head", value: head},
+		{name: "title", value: title},
+		{name: "executor", value: executor},
+	}
+	for _, field := range fields {
+		if field.value == "" {
+			return DraftPullRequestResult{}, fmt.Errorf("draft PR %s is required", field.name)
+		}
+	}
+	for _, field := range fields[1:] {
+		if strings.ContainsAny(field.value, "\r\n") {
+			return DraftPullRequestResult{}, fmt.Errorf("draft PR %s must be a single line", field.name)
+		}
+	}
+
+	full, err := githubRepositoryName(ctx, repo)
+	if err != nil {
+		return DraftPullRequestResult{}, err
+	}
+	body := draftPullRequestBody(request.Body, executor)
+	out, err := runGitHubWithBodyFile(ctx, repo, body,
+		"pr", "create",
+		"--repo", full,
+		"--draft",
+		"--base", base,
+		"--head", head,
+		"--title", title,
+	)
+	if err != nil {
+		return DraftPullRequestResult{}, err
+	}
+	number, err := githubx.ResourceNumberFromURL(out, "pull")
+	if err != nil {
+		return DraftPullRequestResult{}, fmt.Errorf("parse created draft PR: %w", err)
+	}
+	createdURL := strings.TrimSpace(out)
+	record, err := viewDraftPullRequest(ctx, repo, full, number)
+	if err != nil {
+		return DraftPullRequestResult{}, fmt.Errorf("draft PR may have been created at %s, but verification failed: %w", createdURL, err)
+	}
+	expectedHead := head
+	if index := strings.LastIndex(expectedHead, ":"); index >= 0 {
+		expectedHead = expectedHead[index+1:]
+	}
+	switch {
+	case !record.IsDraft:
+		err = fmt.Errorf("PR #%d is not a draft", number)
+	case record.BaseRefName != base:
+		err = fmt.Errorf("PR #%d base is %q, expected %q", number, record.BaseRefName, base)
+	case record.HeadRefName != expectedHead:
+		err = fmt.Errorf("PR #%d head is %q, expected %q", number, record.HeadRefName, expectedHead)
+	case record.Title != title:
+		err = fmt.Errorf("PR #%d title does not match the request", number)
+	case normalizeBodyForComparison(record.Body) != normalizeBodyForComparison(body):
+		err = fmt.Errorf("PR #%d body does not match the request", number)
+	}
+	if err != nil {
+		return DraftPullRequestResult{}, fmt.Errorf("draft PR may have been created at %s, but verification failed: %w", createdURL, err)
+	}
+	return DraftPullRequestResult{
+		Number:   record.Number,
+		URL:      record.URL,
+		State:    "PENDING_USER_APPROVAL",
+		Base:     record.BaseRefName,
+		Head:     record.HeadRefName,
+		Title:    record.Title,
+		Executor: executor,
+	}, nil
+}
+
+func githubRepositoryName(ctx context.Context, repo string) (string, error) {
+	out, err := runGitHub(ctx, repo, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+	if err != nil {
+		return "", err
+	}
+	full := strings.TrimSpace(out)
+	parts := strings.Split(full, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", fmt.Errorf("gh repo view returned invalid nameWithOwner %q", full)
+	}
+	return full, nil
+}
+
+func viewDraftPullRequest(ctx context.Context, repo, full string, number int) (draftPullRequestRecord, error) {
+	out, err := runGitHub(ctx, repo,
+		"pr", "view", fmt.Sprint(number),
+		"--repo", full,
+		"--json", "number,url,isDraft,baseRefName,headRefName,title,body",
+	)
+	if err != nil {
+		return draftPullRequestRecord{}, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return draftPullRequestRecord{}, fmt.Errorf("gh pr view returned empty output")
+	}
+	var record draftPullRequestRecord
+	if err := json.Unmarshal([]byte(out), &record); err != nil {
+		return draftPullRequestRecord{}, fmt.Errorf("parse gh pr view output: %w", err)
+	}
+	if record.Number != number || record.Number <= 0 {
+		return draftPullRequestRecord{}, fmt.Errorf("gh pr view returned PR #%d, expected #%d", record.Number, number)
+	}
+	urlNumber, err := githubx.ResourceNumberFromURL(record.URL, "pull")
+	if err != nil || urlNumber != number {
+		return draftPullRequestRecord{}, fmt.Errorf("gh pr view returned invalid URL for PR #%d", number)
+	}
+	return record, nil
+}
+
+func draftPullRequestBody(body, executor string) string {
+	content := strings.TrimRight(normalizeNewlines(body), "\n")
+	if content != "" {
+		content += "\n\n"
+	}
+	return fmt.Sprintf("%s<!-- GIA:DRAFT-PR:START -->\nexecutor: %s\nstate: PENDING_USER_APPROVAL\n<!-- GIA:DRAFT-PR:END -->\n", content, executor)
+}
+
+func normalizeNewlines(value string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n")
+}
+
+func normalizeBodyForComparison(value string) string {
+	return strings.TrimRight(normalizeNewlines(value), "\n")
 }
 
 func Status(ctx context.Context, repo string) (StatusResult, error) {
