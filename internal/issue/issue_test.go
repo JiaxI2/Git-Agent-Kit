@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/example/git-isolated-agent-kit/internal/config"
-	"github.com/example/git-isolated-agent-kit/internal/githubx"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/config"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/githubx"
 )
 
 func TestFromDirection(t *testing.T) {

@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/example/git-isolated-agent-kit/internal/config"
-	"github.com/example/git-isolated-agent-kit/internal/gitx"
-	"github.com/example/git-isolated-agent-kit/internal/issue"
-	"github.com/example/git-isolated-agent-kit/internal/notify"
-	"github.com/example/git-isolated-agent-kit/internal/validate"
-	"github.com/example/git-isolated-agent-kit/internal/workflow"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/config"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/gitx"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/issue"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/notify"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/validate"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/workflow"
 )
 
 const version = "0.1.0"

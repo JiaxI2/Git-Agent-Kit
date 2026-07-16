@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "labels": [
+    {"name": "agent:ready", "color": "0E8A16", "description": "Ready for a GIA executor"},
+    {"name": "agent:claimed", "color": "FBCA04", "description": "Claimed by a GIA executor"},
+    {"name": "agent:completed", "color": "5319E7", "description": "Completed through the GIA lifecycle"},
+    {"name": "risk:low", "color": "0E8A16", "description": "Low-risk task"},
+    {"name": "risk:medium", "color": "FBCA04", "description": "Medium-risk task"},
+    {"name": "risk:high", "color": "D93F0B", "description": "High-risk task"},
+    {"name": "bug", "color": "D73A4A", "description": "Reproducible defect"},
+    {"name": "enhancement", "color": "A2EEEF", "description": "Improvement request"},
+    {"name": "status:needs-triage", "color": "D4C5F9", "description": "Needs maintainer triage"}
+  ]
+}

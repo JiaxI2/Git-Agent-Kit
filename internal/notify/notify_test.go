@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/example/git-isolated-agent-kit/internal/config"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/config"
 )
 
 func TestSendWithNoChannels(t *testing.T) {

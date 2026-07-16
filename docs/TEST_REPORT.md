@@ -27,7 +27,7 @@
   - `internal/validate`：6.2%；
   - `internal/workflow`：11.2%；
   - CLI、config、gitx、notify：0%。
-- Go module 仍使用占位身份 `github.com/example/git-isolated-agent-kit`，正式发布前必须确定权威仓库身份。
+- Go module 已绑定 canonical 身份 `github.com/JiaxI2/git-isolated-agent-kit`；发布前仍需完成真实 T2/T3/T4 回归并确认 Tag/Release 证据。
 
 ## T1 本地沙箱集成
 
@@ -138,7 +138,7 @@ PowerShell AST 与 PSScriptAnalyzer 通过，但 Safety gate 失败：
 6. 修复 `workflow_dispatch` 条件或移除不可执行入口。
 7. 修复 PowerShell 测试脚本 Safety gate。
 8. 补齐 CLI/config/gitx/notify 和远程流程测试覆盖率。
-9. 建立 canonical Git 仓库并替换 `github.com/example/...` module 占位身份，确保版本、Tag 和测试证据可追溯。
+9. canonical module 身份已改为 `github.com/JiaxI2/git-isolated-agent-kit`；仍需建立远端仓库、Tag 和 Release，确保测试证据可追溯。
 
 ## 清理结果
 

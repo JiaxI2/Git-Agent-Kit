@@ -1,4 +1,4 @@
-module github.com/example/git-isolated-agent-kit
+module github.com/JiaxI2/git-isolated-agent-kit
 
 go 1.22
 

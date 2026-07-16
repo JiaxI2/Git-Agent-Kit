@@ -1,0 +1,35 @@
+name: Bug 报告
+description: 报告可复现的功能、隔离或安全失败
+title: "[Bug] "
+labels: ["bug", "status:needs-triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: GIA 版本
+      placeholder: v0.1.0 或 commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小复现步骤
+      description: 请删除 Token、私有地址和用户目录。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: rollback
+    attributes:
+      label: 已尝试的恢复或回滚

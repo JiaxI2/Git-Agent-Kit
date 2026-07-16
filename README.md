@@ -1,5 +1,9 @@
 # Git Isolated Agent Kit（GIA Kit）
 
+[![CI](https://github.com/JiaxI2/git-isolated-agent-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/JiaxI2/git-isolated-agent-kit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JiaxI2/git-isolated-agent-kit)](https://github.com/JiaxI2/git-isolated-agent-kit/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 一个独立、可移植的多 Agent Git 隔离开发工具包。它将网页版 GPT、Codex、Claude Code、CI 和人工开发者视为可替换执行器，由 Git/PR 负责隔离、审计、交接、验证与发布门禁。
 
 ## 核心原则
@@ -155,6 +159,8 @@ gh workflow run gia-agent-dispatch.yml -f issue_number=123
 ## 测试与持续迭代
 
 详见 [测试方案](docs/TEST_PLAN.md) 和 [对抗式威胁模型](docs/THREAT_MODEL.md)。
+贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题请按
+[SECURITY.md](SECURITY.md) 私下报告。
 
 ## 当前边界
 

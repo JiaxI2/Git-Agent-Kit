@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/git-isolated-agent-kit/internal/config"
-	"github.com/example/git-isolated-agent-kit/internal/githubx"
-	"github.com/example/git-isolated-agent-kit/internal/gitx"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/config"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/githubx"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/gitx"
 )
 
 var claimRun = run

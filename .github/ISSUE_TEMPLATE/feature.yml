@@ -1,0 +1,28 @@
+name: 功能建议
+description: 提议一个平台中立、可验证的 GIA 改进
+title: "[Feature] "
+labels: ["enhancement", "status:needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题或优化方向
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: 非目标
+  - type: dropdown
+    id: risk
+    attributes:
+      label: 风险
+      options: [low, medium, high]
+    validations:
+      required: true
