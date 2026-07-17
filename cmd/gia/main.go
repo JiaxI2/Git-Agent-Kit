@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/adapters/legacy"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/config"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/domain"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/gitx"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/issue"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/notify"
@@ -171,7 +173,11 @@ func cmdDoctor(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	report := workflow.DoctorWithConfig(ctx, *repo, *configPath)
+	services := legacy.NewServices(*repo, *configPath)
+	report, err := services.Repository.Inspect(ctx, domain.RepositoryRequest{Repository: *repo, ConfigPath: *configPath, Mode: "doctor"})
+	if err != nil {
+		return err
+	}
 	if !report.OK {
 		return emitFailure("doctor", report, errors.New("doctor checks failed"))
 	}
@@ -495,7 +501,8 @@ func cmdWorktree(ctx context.Context, args []string) error {
 		if *pr <= 0 && *ref == "" {
 			return errors.New("--pr or --ref is required")
 		}
-		result, err := workflow.CreateValidationWorktree(ctx, *repo, *pr, *ref, *root)
+		services := legacy.NewServices(*repo, "")
+		result, err := services.Workspace.Change(ctx, domain.WorkspaceRequest{Repository: *repo, Action: "create", PR: *pr, Ref: *ref, Root: *root})
 		if err != nil {
 			return err
 		}
@@ -512,10 +519,12 @@ func cmdWorktree(ctx context.Context, args []string) error {
 		if *path == "" {
 			return errors.New("--path is required")
 		}
-		if err := gitx.RemoveWorktree(ctx, *repo, *path, *force); err != nil {
+		services := legacy.NewServices(*repo, "")
+		result, err := services.Workspace.Change(ctx, domain.WorkspaceRequest{Repository: *repo, Action: "remove", Path: *path, Force: *force})
+		if err != nil {
 			return err
 		}
-		emit(output{OK: true, Command: "worktree remove", Data: map[string]interface{}{"path": *path, "force": *force}})
+		emit(output{OK: true, Command: "worktree remove", Data: map[string]interface{}{"path": result.Path, "force": result.Force}})
 		return nil
 	default:
 		return errors.New("usage: gia worktree create|remove")

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/adapters/legacy"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/adapters/mcp"
-	"github.com/JiaxI2/git-isolated-agent-kit/internal/app"
 )
 
 func main() {
@@ -15,7 +15,7 @@ func main() {
 	if repository == "" {
 		repository = "."
 	}
-	server := mcp.Server{Repository: repository, Services: app.Services{}}
+	server := mcp.Server{Repository: repository, Services: legacy.NewServices(repository, "")}
 	if err := server.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
