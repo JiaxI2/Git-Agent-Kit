@@ -12,6 +12,8 @@
 | 恶意 Issue 注入命令 | Issue 只是规格，不直接执行正文 | 执行器禁止把 Issue 文本当 shell |
 | Token 泄漏 | 不存储 Token，复用 gh 凭据 | 最小权限 GitHub App/token |
 | Agent 越权批准、合并或发布 | workflow policy 默认仅允许 `user` | 独立 GitHub App/token、branch protection、environment reviewers |
+| 共享用户身份被误当成独立 Agent | `identityMode=shared-user` 显式建模，doctor 对照 actor/owner | 需要硬隔离时切换 GitHub App 或团队身份 |
+| 本地审批策略与远端 ruleset 漂移 | doctor 校验 owner-merge/required-review 与有效 PR rule | 仓库管理员维护 ruleset 与 CODEOWNERS |
 | PR 合并后难回滚 | squash/revert 策略 | 禁止共享历史 force push |
 | 通知 Webhook 外泄 | 默认仅 console | 用户自行保护 URL/内容 |
 
@@ -25,6 +27,8 @@
 - 仓库脏：拒绝验证；
 - worktree 脏：拒绝删除；
 - 缺少 `gh` 认证：拒绝远程写入；
+- GitHub actor 类型与 `identityMode` 不一致：doctor 失败；
+- `approvalMode` 与默认分支有效 ruleset 不一致：doctor 失败；
 - 同时存在多个配置格式：拒绝加载，避免策略分叉；
 - 高风险任务：不应默认自动认领；
 - Claim 标签或评论更新失败：传播错误并补偿，不报告 `CLAIMED`；

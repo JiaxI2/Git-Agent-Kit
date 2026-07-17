@@ -715,7 +715,7 @@ func showHelp(path []string) error {
 
 var commandHelp = map[string]string{
 	"init":            "Usage: gia init [--repo <path>] [--format json|yaml|yml] [--force]\nInitialize exactly one .gia configuration and the templates in a repository.\n",
-	"doctor":          "Usage: gia doctor [--repo <path>] [--config <path>]\nCheck Git, GitHub CLI, Go, repository, authentication, configuration, and the permission-boundary reminder.\n",
+	"doctor":          "Usage: gia doctor [--repo <path>] [--config <path>]\nCheck Git, GitHub CLI, Go, repository, authentication, identity mode, approval policy, and permission boundaries.\n",
 	"issue":           "Usage: gia issue create|list\nCreate a structured task Issue or list ready Issues.\n",
 	"issue create":    "Usage: gia issue create [--repo <path>] [--config <path>] --direction <text> [--risk auto|low|medium|high] [--executor <name>] [--dry-run]\n",
 	"issue list":      "Usage: gia issue list [--repo <path>] [--config <path>] [--limit <count>]\nList open Issues carrying the configured ready label.\n",

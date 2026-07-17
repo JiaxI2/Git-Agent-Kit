@@ -39,6 +39,9 @@ func TestMatchAnySupportsProtectedPolicyGlobs(t *testing.T) {
 
 func TestDefaultPermissionsAreUserControlled(t *testing.T) {
 	got := Default().Permissions
+	if got.IdentityMode != IdentityModeSharedUser || got.ApprovalMode != ApprovalModeOwnerMerge {
+		t.Fatalf("permission modes = %s/%s", got.IdentityMode, got.ApprovalMode)
+	}
 	if !reflect.DeepEqual(got.AllowedExecutors, []string{"*"}) {
 		t.Fatalf("AllowedExecutors = %v", got.AllowedExecutors)
 	}
@@ -87,6 +90,8 @@ func TestLoadFromRepoSupportsExactlyOneJSONOrYAMLConfig(t *testing.T) {
   "defaultBranch": "trunk",
   "validation": {"remote": "review"},
   "permissions": {
+    "identityMode": "github-app",
+    "approvalMode": "required-review",
     "allowedExecutors": ["agent-a"],
     "approvalPrincipals": ["reviewer"],
     "mergePrincipals": ["maintainer"],
@@ -99,6 +104,8 @@ defaultBranch: trunk
 validation:
   remote: review
 permissions:
+  identityMode: github-app
+  approvalMode: required-review
   allowedExecutors: [agent-a]
   approvalPrincipals: [reviewer]
   mergePrincipals: [maintainer]
@@ -116,6 +123,8 @@ permissions:
 				t.Fatalf("loaded config = %+v", cfg)
 			}
 			if !reflect.DeepEqual(cfg.Permissions.AllowedExecutors, []string{"agent-a"}) ||
+				cfg.Permissions.IdentityMode != IdentityModeGitHubApp ||
+				cfg.Permissions.ApprovalMode != ApprovalModeRequiredReview ||
 				!reflect.DeepEqual(cfg.Permissions.ApprovalPrincipals, []string{"reviewer"}) ||
 				!reflect.DeepEqual(cfg.Permissions.MergePrincipals, []string{"maintainer"}) ||
 				!reflect.DeepEqual(cfg.Permissions.ReleasePrincipals, []string{"release-manager"}) {
@@ -205,6 +214,32 @@ func TestLoadRejectsUnknownFieldsAndMultipleDocuments(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidPermissionModes(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "identity", content: "permissions:\n  identityMode: robot-user\n", want: "permissions.identityMode"},
+		{name: "approval", content: "permissions:\n  approvalMode: self-approve\n", want: "permissions.approvalMode"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			dir := filepath.Join(repo, ".gia")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadFromRepo(repo)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("LoadFromRepo() error=%v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestSaveUsesRequestedJSONOrYAMLFormat(t *testing.T) {
 	for _, extension := range []string{".json", ".yaml", ".yml"} {
 		t.Run(extension, func(t *testing.T) {
@@ -261,6 +296,9 @@ func TestLoadFromRepoAppliesPermissionDefaultsOnlyWhenOmitted(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Permissions.ApprovalPrincipals, []string{"user"}) {
 		t.Fatalf("omitted approval defaults = %v", cfg.Permissions.ApprovalPrincipals)
+	}
+	if cfg.Permissions.IdentityMode != IdentityModeSharedUser || cfg.Permissions.ApprovalMode != ApprovalModeOwnerMerge {
+		t.Fatalf("omitted permission mode defaults = %s/%s", cfg.Permissions.IdentityMode, cfg.Permissions.ApprovalMode)
 	}
 }
 

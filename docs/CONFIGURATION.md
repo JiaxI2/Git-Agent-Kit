@@ -83,21 +83,39 @@ Webhook 接收 JSON：`event`、`message`、`time`。
 
 ```yaml
 permissions:
+  identityMode: shared-user
+  approvalMode: owner-merge
   allowedExecutors: ["*"]
   approvalPrincipals: [user]
   mergePrincipals: [user]
   releasePrincipals: [user]
 ```
 
+- `identityMode`：GitHub actor 模型，可选 `shared-user`、`github-app`、`team`。
+- `approvalMode`：审批模型，可选 `owner-merge`、`required-review`。
 - `allowedExecutors`：允许执行任务并提交 Draft PR 申请的执行器；`"*"` 表示任意已接入执行器。
 - `approvalPrincipals`：可批准从 Draft 进入后续评审阶段的主体，默认仅 `user`。
 - `mergePrincipals`：可执行合并的主体，默认仅 `user`。
 - `releasePrincipals`：可执行 Tag/Release 的主体，默认仅 `user`。
 
-显式空数组表示 deny-all；旧配置遗漏字段时应用上述安全默认值。这些字段只表达
-GIA workflow policy，不能替代 GitHub 的硬权限隔离。生产接入必须为 Agent 使用
-独立 GitHub App 或最小权限 token，并通过 branch protection、environments 和
-required reviewers 实际限制批准、合并与发布权限。
+`shared-user + owner-merge` 是兼容现有本地 Agent 的默认组合：GIA 复用当前
+`gh` 用户，远端 PR rule 必须保持零强制审批、关闭 Code Owner 和最后推送者
+审批门禁；所有者通过最终 merge 完成人工确认。该模式不能把同一 Token 下的
+Agent 与用户隔离。
+
+`github-app + required-review` 或 `team + required-review` 用于真实多身份协作：
+远端必须至少要求一次 Review 或 Code Owner Review。`github-app` 要求当前认证
+是 GitHub App installation token；`team` 使用普通 GitHub 用户身份。`doctor`
+会读取实际 actor、仓库 owner 和 `<defaultBranch>` 的有效 ruleset，检测下列漂移：
+
+- 配置 `github-app`，实际 `gh` 却是用户 Token；
+- 配置 `owner-merge`，远端仍要求审批、Code Owner 或最后推送者批准；
+- 配置 `required-review`，远端没有任何强制 Review；
+- `shared-user` 的 actor 等于仓库 owner，却配置为必须由 owner 自审。
+
+显式空数组表示 deny-all；旧配置遗漏身份字段时按 `shared-user + owner-merge`
+处理。所有字段仍只是 workflow policy；硬隔离必须由独立 GitHub App/token、
+branch protection、environments 和 required reviewers 实际执行。
 
 ## Draft PR 申请
 

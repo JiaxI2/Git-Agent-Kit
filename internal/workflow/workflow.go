@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,23 @@ type FeedbackResult struct {
 var runGitHub = githubx.Run
 var runGitHubWithBodyFile = githubx.RunWithBodyFile
 var claimRunWithBodyFile = githubx.RunWithBodyFile
+var doctorRun = run
+
+type githubIdentity struct {
+	Kind       string
+	Actor      string
+	Owner      string
+	Repository string
+}
+
+type effectiveRule struct {
+	Type       string `json:"type"`
+	Parameters struct {
+		RequiredApprovingReviewCount int  `json:"required_approving_review_count"`
+		RequireCodeOwnerReview       bool `json:"require_code_owner_review"`
+		RequireLastPushApproval      bool `json:"require_last_push_approval"`
+	} `json:"parameters"`
+}
 
 func Initialize(repo string, force bool) error {
 	_, err := InitializeWithFormat(repo, "json", force)
@@ -153,15 +171,30 @@ func DoctorWithConfig(ctx context.Context, repo, configPath string) DoctorReport
 	add("go", err, "Go toolchain")
 	_, err = gitx.Run(ctx, repo, "rev-parse", "--is-inside-work-tree")
 	add("repository", err, repo)
-	_, err = config.Load(repo, configPath)
+	cfg, configErr := config.Load(repo, configPath)
 	configDetail := "auto-discover exactly one .gia/config.json, config.yaml, or config.yml"
 	if strings.TrimSpace(configPath) != "" {
 		configDetail = "explicit config: " + configPath
 	}
-	add("config", err, configDetail)
-	add("permission-boundary", nil, "GIA permissions are workflow policy; a separate GitHub App/token plus GitHub ruleset is the hard approval, merge, and release boundary")
-	_, err = run(ctx, repo, "gh", "auth", "status")
-	add("github-auth", err, "gh auth status")
+	add("config", configErr, configDetail)
+	add("permission-boundary", nil, "permissions.identityMode and approvalMode declare workflow intent; a separate GitHub App/token plus GitHub ruleset remains the hard approval, merge, and release boundary")
+	_, authErr := doctorRun(ctx, repo, "gh", "auth", "status")
+	add("github-auth", authErr, "gh auth status")
+	if configErr != nil || authErr != nil {
+		detail := "requires a valid GIA config and authenticated gh session"
+		add("github-identity", errors.New(detail), detail)
+		add("approval-policy", errors.New(detail), detail)
+	} else {
+		identity, detail, identityErr := inspectGitHubIdentity(ctx, repo, cfg)
+		add("github-identity", identityErr, detail)
+		if identityErr != nil {
+			detail = "requires a GitHub actor matching permissions.identityMode"
+			add("approval-policy", errors.New(detail), detail)
+		} else {
+			detail, approvalErr := inspectApprovalPolicy(ctx, repo, cfg, identity)
+			add("approval-policy", approvalErr, detail)
+		}
+	}
 	ok := true
 	for _, c := range checks {
 		if !c.OK {
@@ -169,6 +202,91 @@ func DoctorWithConfig(ctx context.Context, repo, configPath string) DoctorReport
 		}
 	}
 	return DoctorReport{ok, checks}
+}
+
+func inspectGitHubIdentity(ctx context.Context, repo string, cfg config.Config) (githubIdentity, string, error) {
+	full, err := doctorRun(ctx, repo, "gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+	if err != nil {
+		return githubIdentity{}, "cannot resolve the target GitHub repository", err
+	}
+	parts := strings.SplitN(strings.TrimSpace(full), "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return githubIdentity{}, fmt.Sprintf("gh repo view returned invalid nameWithOwner %q", full), fmt.Errorf("invalid GitHub repository identity")
+	}
+	identity := githubIdentity{Owner: parts[0], Repository: strings.TrimSpace(full)}
+	switch cfg.Permissions.IdentityMode {
+	case config.IdentityModeSharedUser, config.IdentityModeTeam:
+		actor, actorErr := doctorRun(ctx, repo, "gh", "api", "user", "--jq", ".login")
+		if actorErr != nil {
+			detail := fmt.Sprintf("permissions.identityMode=%s requires a GitHub user token, but gh did not resolve a user actor", cfg.Permissions.IdentityMode)
+			return githubIdentity{}, detail, actorErr
+		}
+		identity.Kind = "user"
+		identity.Actor = strings.TrimSpace(actor)
+		if identity.Actor == "" {
+			return githubIdentity{}, "gh api user returned an empty login", fmt.Errorf("empty GitHub user actor")
+		}
+	case config.IdentityModeGitHubApp:
+		if _, appErr := doctorRun(ctx, repo, "gh", "api", "installation/repositories", "--jq", ".total_count"); appErr != nil {
+			actor, userErr := doctorRun(ctx, repo, "gh", "api", "user", "--jq", ".login")
+			if userErr == nil && strings.TrimSpace(actor) != "" {
+				detail := fmt.Sprintf("permissions.identityMode=%s, but gh is authenticated as user %s", cfg.Permissions.IdentityMode, strings.TrimSpace(actor))
+				return githubIdentity{}, detail, fmt.Errorf("GitHub identity mode mismatch")
+			}
+			return githubIdentity{}, "permissions.identityMode=github-app requires a GitHub App installation token", appErr
+		}
+		identity.Kind = "github-app"
+		identity.Actor = "github-app-installation"
+	default:
+		return githubIdentity{}, "unsupported permissions.identityMode", fmt.Errorf("unsupported identity mode %q", cfg.Permissions.IdentityMode)
+	}
+	detail := fmt.Sprintf("mode=%s actor=%s owner=%s repository=%s", cfg.Permissions.IdentityMode, identity.Actor, identity.Owner, identity.Repository)
+	return identity, detail, nil
+}
+
+func inspectApprovalPolicy(ctx context.Context, repo string, cfg config.Config, identity githubIdentity) (string, error) {
+	branch := strings.TrimSpace(cfg.DefaultBranch)
+	if branch == "" {
+		return "defaultBranch is empty", fmt.Errorf("cannot inspect approval rules without defaultBranch")
+	}
+	endpoint := fmt.Sprintf("repos/%s/rules/branches/%s", identity.Repository, url.PathEscape(branch))
+	out, err := doctorRun(ctx, repo, "gh", "api", endpoint)
+	if err != nil {
+		return fmt.Sprintf("cannot inspect effective GitHub rules for %s", branch), err
+	}
+	var rules []effectiveRule
+	if err := json.Unmarshal([]byte(out), &rules); err != nil {
+		return "cannot parse effective GitHub rules", err
+	}
+	var pullRequest *effectiveRule
+	for i := range rules {
+		if rules[i].Type == "pull_request" {
+			pullRequest = &rules[i]
+			break
+		}
+	}
+	if pullRequest == nil {
+		detail := fmt.Sprintf("approvalMode=%s requires an effective pull_request rule on %s", cfg.Permissions.ApprovalMode, branch)
+		return detail, fmt.Errorf("missing pull request rule")
+	}
+	parameters := pullRequest.Parameters
+	detail := fmt.Sprintf("mode=%s approvals=%d codeOwner=%t lastPush=%t branch=%s", cfg.Permissions.ApprovalMode, parameters.RequiredApprovingReviewCount, parameters.RequireCodeOwnerReview, parameters.RequireLastPushApproval, branch)
+	switch cfg.Permissions.ApprovalMode {
+	case config.ApprovalModeOwnerMerge:
+		if parameters.RequiredApprovingReviewCount > 0 || parameters.RequireCodeOwnerReview || parameters.RequireLastPushApproval {
+			return detail + "; owner-merge requires zero formal approvals and no code-owner/last-push approval gate", fmt.Errorf("GitHub approval rules conflict with owner-merge")
+		}
+	case config.ApprovalModeRequiredReview:
+		if parameters.RequiredApprovingReviewCount < 1 && !parameters.RequireCodeOwnerReview {
+			return detail + "; required-review is not enforced by GitHub", fmt.Errorf("GitHub approval rules do not require a review")
+		}
+		if cfg.Permissions.IdentityMode == config.IdentityModeSharedUser && strings.EqualFold(identity.Actor, identity.Owner) {
+			return detail + "; shared-user actor is the repository owner and cannot approve its own PR; use owner-merge, team, or github-app", fmt.Errorf("shared user identity cannot satisfy owner review")
+		}
+	default:
+		return detail, fmt.Errorf("unsupported approval mode %q", cfg.Permissions.ApprovalMode)
+	}
+	return detail, nil
 }
 
 func Claim(ctx context.Context, repo string, issue int, executor string, cfg config.Config) (ClaimResult, error) {

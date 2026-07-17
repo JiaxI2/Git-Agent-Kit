@@ -32,6 +32,8 @@
     "rejectForcePush": true
   },
   "permissions": {
+    "identityMode": "shared-user",
+    "approvalMode": "owner-merge",
     "allowedExecutors": ["*"],
     "approvalPrincipals": ["user"],
     "mergePrincipals": ["user"],
