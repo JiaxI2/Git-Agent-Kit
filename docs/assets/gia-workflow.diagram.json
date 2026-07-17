@@ -1,0 +1,281 @@
+{
+  "schemaVersion": 1,
+  "document": {
+    "id": "gia-workflow",
+    "title": "GIA Multi-Agent Git Isolation Workflow",
+    "page": {
+      "width": 16,
+      "height": 8.5,
+      "orientation": "landscape",
+      "margin": 0.5
+    },
+    "theme": "visio-default",
+    "styleProfile": "engineering-standard",
+    "typography": {
+      "fontFamily": "SimSun",
+      "latinFontFamily": "Arial",
+      "asianFontFamily": "SimSun",
+      "fontSizePt": 10
+    },
+    "appearance": {
+      "pageBackgroundColor": "#FFFFFF",
+      "textColor": "#000000",
+      "nodeLineColor": "#404040",
+      "nodeFillColor": "#FFFFFF",
+      "connectorLineColor": "#404040",
+      "lineWeightPt": 0.75,
+      "nodeCornerRadiusIn": 0.12
+    },
+    "layout": {
+      "engine": "manual",
+      "direction": "LR",
+      "compact": true,
+      "uniformNodeSize": false,
+      "nodeGap": 0.51,
+      "layerGap": 0.51
+    }
+  },
+  "nodes": [
+    {
+      "id": "title",
+      "text": "GIA 多 Agent Git 隔离工作流",
+      "type": "note",
+      "x": 8,
+      "y": 7.72,
+      "width": 6,
+      "height": 0.55,
+      "layer": 90,
+      "order": 90,
+      "fontSizePt": 18,
+      "fontWeight": "bold",
+      "lineColor": "#FFFFFF",
+      "fillColor": "#FFFFFF",
+      "sizeClass": "diagram-title",
+      "data": {
+        "sizeEvidence": {
+          "requiredWidth": 6,
+          "reason": "README 标题需要在 16:9 页面中形成稳定的视觉中心。"
+        }
+      }
+    },
+    {
+      "id": "subtitle",
+      "text": "Issue 任务真源 · 原子认领 · 独立执行面 · SHA 绑定验证 · 用户最终审批",
+      "type": "note",
+      "x": 8,
+      "y": 7.12,
+      "width": 10.5,
+      "height": 0.4,
+      "layer": 91,
+      "order": 91,
+      "fontSizePt": 10,
+      "textColor": "#666666",
+      "lineColor": "#FFFFFF",
+      "fillColor": "#FFFFFF",
+      "sizeClass": "diagram-subtitle",
+      "data": {
+        "sizeEvidence": {
+          "requiredWidth": 10.5,
+          "reason": "单行副标题用于概括完整生命周期并避免不必要换行。"
+        }
+      }
+    },
+    {
+      "id": "direction",
+      "text": "1. 用户 / Agent\n输入优化方向",
+      "type": "process",
+      "x": 1.6,
+      "y": 5.2,
+      "width": 2.05,
+      "height": 1.15,
+      "layer": 0,
+      "order": 0,
+      "fontWeight": "bold",
+      "fillColor": "#FFFFFF",
+      "sizeClass": "workflow-step"
+    },
+    {
+      "id": "issue",
+      "text": "2. GitHub Issue\n任务真源",
+      "type": "process",
+      "x": 4.16,
+      "y": 5.2,
+      "width": 2.05,
+      "height": 1.15,
+      "layer": 1,
+      "order": 0,
+      "fontWeight": "bold",
+      "fillColor": "#FFFFFF",
+      "sizeClass": "workflow-step"
+    },
+    {
+      "id": "claim",
+      "text": "3. 原子 Claim\ngia/claims/<issue>",
+      "type": "process",
+      "x": 6.72,
+      "y": 5.2,
+      "width": 2.05,
+      "height": 1.15,
+      "layer": 2,
+      "order": 0,
+      "fontWeight": "bold",
+      "fillColor": "#FFFFFF",
+      "sizeClass": "workflow-step"
+    },
+    {
+      "id": "workspace",
+      "text": "4. 任务分支 + Worktree\n编辑 / Commit / Push",
+      "type": "process",
+      "x": 9.28,
+      "y": 5.2,
+      "width": 2.05,
+      "height": 1.15,
+      "layer": 3,
+      "order": 0,
+      "fillColor": "#FFFFFF",
+      "sizeClass": "workflow-step"
+    },
+    {
+      "id": "validate",
+      "text": "5. SHA 绑定验证\nsmoke / full / release\nDraft PR",
+      "type": "process",
+      "x": 11.84,
+      "y": 5.2,
+      "width": 2.05,
+      "height": 1.15,
+      "layer": 4,
+      "order": 0,
+      "fontWeight": "bold",
+      "fillColor": "#FFFFFF",
+      "sizeClass": "workflow-step"
+    },
+    {
+      "id": "approval",
+      "text": "6. 用户审批\nMerge / Tag / Release\nHandoff → 新 Issue",
+      "type": "process",
+      "x": 14.4,
+      "y": 5.2,
+      "width": 2.05,
+      "height": 1.15,
+      "layer": 5,
+      "order": 0,
+      "fontWeight": "bold",
+      "fillColor": "#FFFFFF",
+      "sizeClass": "workflow-step"
+    },
+    {
+      "id": "permission_guard",
+      "text": "权限边界\nAgent 可申请 PR；用户审批、合并和发布",
+      "type": "process",
+      "x": 3,
+      "y": 2.4,
+      "width": 4.25,
+      "height": 1.05,
+      "layer": 92,
+      "order": 92,
+      "fontSizePt": 10,
+      "fillColor": "#FFFFFF",
+      "sizeClass": "guardrail",
+      "data": {
+        "sizeEvidence": {
+          "requiredWidth": 4.25,
+          "reason": "三项治理边界使用等宽卡片，形成可扫描的第二信息层。"
+        }
+      }
+    },
+    {
+      "id": "sha_guard",
+      "text": "验证边界\nHEAD 必须等于当前 upstream tip",
+      "type": "process",
+      "x": 8,
+      "y": 2.4,
+      "width": 4.25,
+      "height": 1.05,
+      "layer": 93,
+      "order": 92,
+      "fontSizePt": 10,
+      "fillColor": "#FFFFFF",
+      "sizeClass": "guardrail",
+      "data": {
+        "sizeEvidence": {
+          "requiredWidth": 4.25,
+          "reason": "三项治理边界使用等宽卡片，形成可扫描的第二信息层。"
+        }
+      }
+    },
+    {
+      "id": "failure_guard",
+      "text": "失败关闭\n错误传播、补偿回滚、不破坏用户仓库",
+      "type": "process",
+      "x": 13,
+      "y": 2.4,
+      "width": 4.25,
+      "height": 1.05,
+      "layer": 94,
+      "order": 92,
+      "fontSizePt": 10,
+      "fillColor": "#FFFFFF",
+      "sizeClass": "guardrail",
+      "data": {
+        "sizeEvidence": {
+          "requiredWidth": 4.25,
+          "reason": "三项治理边界使用等宽卡片，形成可扫描的第二信息层。"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "flow_01",
+      "from": "direction",
+      "to": "issue",
+      "type": "directed",
+      "routing": "orthogonal",
+      "sourcePort": "right",
+      "targetPort": "left"
+    },
+    {
+      "id": "flow_02",
+      "from": "issue",
+      "to": "claim",
+      "type": "directed",
+      "routing": "orthogonal",
+      "sourcePort": "right",
+      "targetPort": "left"
+    },
+    {
+      "id": "flow_03",
+      "from": "claim",
+      "to": "workspace",
+      "type": "directed",
+      "routing": "orthogonal",
+      "sourcePort": "right",
+      "targetPort": "left"
+    },
+    {
+      "id": "flow_04",
+      "from": "workspace",
+      "to": "validate",
+      "type": "directed",
+      "routing": "orthogonal",
+      "sourcePort": "right",
+      "targetPort": "left"
+    },
+    {
+      "id": "flow_05",
+      "from": "validate",
+      "to": "approval",
+      "type": "directed",
+      "routing": "orthogonal",
+      "sourcePort": "right",
+      "targetPort": "left"
+    }
+  ],
+  "metadata": {
+    "purpose": "README workflow overview",
+    "nodeFillMode": "none",
+    "visioFillPattern": 0,
+    "generatedWith": "Microsoft Visio",
+    "generated": true
+  }
+}

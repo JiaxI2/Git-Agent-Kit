@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **docs**: 更新 GIA Visio 工作流图为无填充架构样式，并同步可编辑
+  VSDX、SVG、PNG 与可复现 Diagram IR。
+
 ## 0.1.0 - 2026-07-16
 
 - **test**: 最终 T2 真实 GitHub、T3 对抗场景和 T4 用户体验全部通过；
