@@ -11,6 +11,34 @@
 5. Issue 是需求真源；
 6. commit SHA 是验证结果唯一锚点。
 
+## 核心分层
+
+CLI、MCP 和 Go SDK 都是同一应用内核的适配器，不各自实现治理规则：
+
+```text
+CLI -----\
+MCP ------> Application ---> Domain
+SDK -----/        |
+                  +-- ports --> Git / GitHub / process / filesystem
+                  +-- selector --> LocalExecutor / RemoteExecutor
+```
+
+依赖只向内：Domain 仅依赖标准库，Application 仅依赖 Domain；适配器负责传输
+格式和基础设施映射。所有副作用都声明所需 capability，由应用层选择满足完整
+能力集合的执行器。公开 Go API 位于 `pkg/sdk`，不得暴露 `internal` 类型。
+
+## 可检查执行计划
+
+计划把 repository、base HEAD、任务、effects、策略决策、capability 汇总、配置
+摘要、执行模式和创建时间封装为不可变内容，并以 SHA-256 内容哈希作为 ID。
+`create`、`show`、`diff` 不执行副作用；`apply` 必须再次核对精确 HEAD 与配置摘要，
+再通过 Git common dir 中的排他租约获得唯一执行权。租约一旦取得即不重试，
+无论成功或失败，第二次执行都必须拒绝。
+
+运行态文件位于 Git common dir 的 `gia` 目录，因此多个 worktree 共享同一租约，
+同时不污染任何工作树。执行证据必须绑定计划 ID、base HEAD、配置摘要和实际
+观察时间，审查者可以从计划、结果和 commit 之间恢复完整因果链。
+
 ## 控制面
 
 GIA 定义：任务规格、风险等级、执行器权限、分支规则、交接状态、验证等级、通知和反馈。

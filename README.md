@@ -23,6 +23,10 @@ GIA 将优化方向转化为 GitHub Issue，通过原子 Claim 和独立 Worktre
 单写者执行面；提交推送后绑定远端 SHA 完成验证，再由 Agent 申请 Draft PR，
 最终审批、合并、Tag 和 Release 始终归用户所有。
 
+当前架构演进阶段为 **V2.1**。演进号只用于 README 与 CHANGELOG 的人类可读
+说明；目录、包名、代码标识符和运行态数据保持无版本命名，避免把内部迭代号
+固化成扩展边界。
+
 该架构图由 Microsoft Visio 基于 Diagram IR 工程化绘制；流程块与治理块
 全部采用无填充样式。可编辑源文件见
 [gia-workflow.vsdx](docs/assets/gia-workflow.vsdx)，可复现定义见
@@ -122,6 +126,43 @@ gia worktree create --repo F:\Project\Demo --pr 45 --root F:\Project\Demo-worktr
 gia validate --repo F:\Project\Demo-worktrees\pr-45 --profile full --expected-head <SHA>
 ```
 
+需要在执行前审阅完整副作用时，可以先创建不可变 Plan。请求文件放在目标仓库
+内，例如 `plan-request.json`：
+
+```json
+{
+  "task": {
+    "id": "123",
+    "title": "Run governed validation",
+    "state": "ready",
+    "risk": "medium",
+    "mode": "local"
+  },
+  "effects": [
+    {
+      "kind": "command",
+      "command": "go",
+      "args": ["test", "./..."],
+      "requires": ["local.command", "local.test"]
+    }
+  ]
+}
+```
+
+```powershell
+$plan = gia plan create --repo F:\Project\Demo --input plan-request.json | ConvertFrom-Json
+$id = $plan.data.id
+gia plan show  --repo F:\Project\Demo $id
+gia plan diff  --repo F:\Project\Demo $id
+gia plan apply --repo F:\Project\Demo $id
+```
+
+Plan ID 是内容的 SHA-256；它绑定 repository、base HEAD、任务、effects、策略
+决策、capabilities、配置摘要和执行模式。`create/show/diff` 不产生副作用，
+`apply` 会在取得单次租约前后核对 HEAD 与配置。成功或失败后都不能再次执行。
+计划、租约和结果保存在 Git common dir 的 `gia` 目录，不污染工作树；CLI、
+MCP 和 [`pkg/sdk`](pkg/sdk) 共用同一应用语义。
+
 交接：
 
 ```powershell
@@ -148,6 +189,7 @@ gia feedback --repo F:\Project\Demo --category ux --message "worktree 路径提�
 | `pr request` | 为已认领 Issue 申请 Draft PR，等待用户审批 |
 | `worktree create/remove` | 创建或安全移除隔离验证目录 |
 | `validate` | 运行绑定 SHA 的 smoke/full/release 验证 |
+| `plan create/show/diff/apply` | 创建、检查、对比并单次执行不可变 Plan |
 | `handoff` | 在 PR 评论写入可审计交接块 |
 | `status` | 查看分支、HEAD、清洁状态和 worktree |
 | `feedback` | 将问题/建议记录到 `.gia/feedback` |
@@ -184,11 +226,13 @@ gh workflow run gia-agent-dispatch.yml -f issue_number=123
 - 配置通知 Webhook 或命令；
 - 决定是否允许自动认领。
 
-`issue`、`scan`、`claim`、`pr request`、`validate`、`notify` 和 `doctor`
+`issue`、`scan`、`claim`、`pr request`、`validate`、`plan`、`notify` 和 `doctor`
 支持 `--config <path>` 显式选择配置；显式路径优先于 `.gia` 自动发现。解析会
 拒绝 unknown fields，避免拼写错误导致策略静默失效。
 
 详见 [配置说明](docs/CONFIGURATION.md)。
+架构与增量迁移边界见 [架构说明](docs/ARCHITECTURE.md) 和
+[迁移图](docs/MIGRATION.md)。
 
 ## 测试与持续迭代
 

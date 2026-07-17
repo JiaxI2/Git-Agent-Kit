@@ -17,26 +17,30 @@ type Adapter struct {
 }
 
 type Request struct {
-	Command      string   `json:"command"`
-	TaskID       string   `json:"taskId,omitempty"`
-	Title        string   `json:"title,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Risk         string   `json:"risk,omitempty"`
-	Mode         string   `json:"mode,omitempty"`
-	Executor     string   `json:"executor,omitempty"`
-	Capabilities []string `json:"capabilities,omitempty"`
-	Profile      string   `json:"profile,omitempty"`
-	Repository   string   `json:"repository,omitempty"`
-	ConfigPath   string   `json:"configPath,omitempty"`
-	Action       string   `json:"action,omitempty"`
-	PR           int      `json:"pr,omitempty"`
-	Ref          string   `json:"ref,omitempty"`
-	Root         string   `json:"root,omitempty"`
-	Path         string   `json:"path,omitempty"`
-	Force        bool     `json:"force,omitempty"`
-	Base         string   `json:"base,omitempty"`
-	Head         string   `json:"head,omitempty"`
-	Body         string   `json:"body,omitempty"`
+	Command       string          `json:"command"`
+	TaskID        string          `json:"taskId,omitempty"`
+	Title         string          `json:"title,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	Risk          string          `json:"risk,omitempty"`
+	Mode          string          `json:"mode,omitempty"`
+	Executor      string          `json:"executor,omitempty"`
+	Capabilities  []string        `json:"capabilities,omitempty"`
+	Profile       string          `json:"profile,omitempty"`
+	Repository    string          `json:"repository,omitempty"`
+	ConfigPath    string          `json:"configPath,omitempty"`
+	Action        string          `json:"action,omitempty"`
+	PR            int             `json:"pr,omitempty"`
+	Ref           string          `json:"ref,omitempty"`
+	Root          string          `json:"root,omitempty"`
+	Path          string          `json:"path,omitempty"`
+	Force         bool            `json:"force,omitempty"`
+	Base          string          `json:"base,omitempty"`
+	Head          string          `json:"head,omitempty"`
+	Body          string          `json:"body,omitempty"`
+	PlanID        string          `json:"planId,omitempty"`
+	Task          domain.Task     `json:"task,omitempty"`
+	Effects       []domain.Effect `json:"effects,omitempty"`
+	PreferredMode string          `json:"preferredMode,omitempty"`
 }
 
 type Response struct {
@@ -103,6 +107,17 @@ func (a Adapter) Handle(ctx context.Context, request Request) Response {
 		data, err = a.Services.Repository.Inspect(ctx, domain.RepositoryRequest{
 			Repository: request.Repository, ConfigPath: request.ConfigPath, Mode: mode,
 		})
+	case "plan.create":
+		data, err = a.Services.Plans.Create(ctx, domain.CreatePlanRequest{
+			Repository: request.Repository, Task: request.Task, Effects: request.Effects,
+			PreferredMode: domain.ExecutionMode(request.PreferredMode),
+		})
+	case "plan.show":
+		data, err = a.Services.Plans.Show(ctx, domain.PlanID(request.PlanID))
+	case "plan.diff":
+		data, err = a.Services.Plans.Diff(ctx, domain.PlanID(request.PlanID))
+	case "plan.apply":
+		data, err = a.Services.Plans.Apply(ctx, domain.PlanID(request.PlanID))
 	default:
 		err = errors.New("unsupported application command")
 	}

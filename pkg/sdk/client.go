@@ -1,4 +1,4 @@
-package v1
+package sdk
 
 import (
 	"context"
@@ -66,4 +66,24 @@ func (c *Client) Execute(ctx context.Context, task Task, effects []Effect, prefe
 	}
 	evidence, err := c.services.Execution.Run(ctx, importTask(task), internalEffects, domain.ExecutionMode(preferred))
 	return exportEvidence(evidence), err
+}
+
+func (c *Client) CreatePlan(ctx context.Context, request CreatePlanRequest) (Plan, error) {
+	plan, err := c.services.Plans.Create(ctx, importCreatePlanRequest(request))
+	return exportPlan(plan), err
+}
+
+func (c *Client) ShowPlan(ctx context.Context, id PlanID) (PlanRecord, error) {
+	record, err := c.services.Plans.Show(ctx, domain.PlanID(id))
+	return exportPlanRecord(record), err
+}
+
+func (c *Client) DiffPlan(ctx context.Context, id PlanID) (PlanDiff, error) {
+	diff, err := c.services.Plans.Diff(ctx, domain.PlanID(id))
+	return exportPlanDiff(diff), err
+}
+
+func (c *Client) ApplyPlan(ctx context.Context, id PlanID) (PlanApplyResult, error) {
+	result, err := c.services.Plans.Apply(ctx, domain.PlanID(id))
+	return exportPlanApplyResult(result), err
 }

@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,11 +43,11 @@ func TestInterfaceAdaptersDependInward(t *testing.T) {
 	}
 	assertProjectImports(t, filepath.Join("..", "adapters", "cli"), allowed)
 	assertProjectImports(t, filepath.Join("..", "adapters", "mcp"), allowed)
-	assertProjectImports(t, filepath.Join("..", "..", "pkg", "sdk", "v1"), allowed)
+	assertProjectImports(t, filepath.Join("..", "..", "pkg", "sdk"), allowed)
 }
 
 func TestSDKExportedAPIContainsNoInternalTypes(t *testing.T) {
-	root := filepath.Join("..", "..", "pkg", "sdk", "v1")
+	root := filepath.Join("..", "..", "pkg", "sdk")
 	set := token.NewFileSet()
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -131,6 +132,53 @@ func TestCIMatrixCompilesNewPackagesOnSupportedPlatforms(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Errorf("CI workflow does not contain %q", required)
 		}
+	}
+}
+
+func TestArchitectureEvolutionLabelsStayOutOfCodeAndPaths(t *testing.T) {
+	root := filepath.Join("..", "..")
+	versionedSDK := regexp.MustCompile(`(?i)(^|/)pkg/sdk/v[0-9]+(/|$)`)
+	versionedDocument := regexp.MustCompile(`(?i)(^|/)(architecture|migration)_v[0-9]+`)
+	architectureLabel := regexp.MustCompile(strings.Join([]string{`(?i)architecture\s+`, `v[0-9]+`}, ""))
+	formatLabel := strings.Join([]string{"Plan", "Format", "Version"}, "")
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		normalized := filepath.ToSlash(relative)
+		if entry.IsDir() {
+			if entry.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			if versionedSDK.MatchString(normalized) {
+				t.Errorf("architecture version is encoded in directory %s", normalized)
+			}
+			return nil
+		}
+		if versionedDocument.MatchString(normalized) {
+			t.Errorf("architecture version is encoded in file path %s", normalized)
+		}
+		if filepath.Ext(path) != ".go" && filepath.Ext(path) != ".md" {
+			return nil
+		}
+		if normalized == "README.md" || normalized == "CHANGELOG.md" {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if architectureLabel.Match(content) || strings.Contains(string(content), formatLabel) {
+			t.Errorf("architecture version is encoded in %s", normalized)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
