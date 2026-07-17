@@ -23,8 +23,8 @@ GIA 将优化方向转化为 GitHub Issue，通过原子 Claim 和独立 Worktre
 单写者执行面；提交推送后绑定远端 SHA 完成验证，再由 Agent 申请 Draft PR，
 最终审批、合并、Tag 和 Release 始终归用户所有。
 
-该图先以图像生成草案确定视觉层级，再由 Microsoft Visio 基于 Diagram IR
-工程化重绘。可编辑源文件见
+该架构图由 Microsoft Visio 基于 Diagram IR 工程化绘制；流程块与治理块
+全部采用无填充样式。可编辑源文件见
 [gia-workflow.vsdx](docs/assets/gia-workflow.vsdx)，可复现定义见
 [gia-workflow.diagram.json](docs/assets/gia-workflow.diagram.json)，PNG 预览见
 [gia-workflow.png](docs/assets/gia-workflow.png)。

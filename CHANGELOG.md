@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- **docs**: 增加由 Microsoft Visio 工程化绘制的 GIA 多 Agent Git 隔离
-  工作流图、可编辑源文件和可复现 Diagram IR。
+- **docs**: 更新 GIA Visio 工作流图为无填充架构样式，并同步可编辑
+  VSDX、SVG、PNG 与可复现 Diagram IR。
 
 ## 0.1.0 - 2026-07-16
 
