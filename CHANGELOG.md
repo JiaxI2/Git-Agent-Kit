@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **feat(plan)**: 实施架构演进 **V2.1** 的不可变 Plan：内容哈希 ID 绑定
+  repository、base HEAD、任务、effects、策略、capabilities 与配置摘要；Git
+  common-dir 排他租约保证最多执行一次，Evidence 绑定 Plan ID、HEAD 与配置摘要。
 - **feat**: 新增 `identityMode` / `approvalMode` JSON、YAML 配置，
   `doctor` 对照实际 GitHub actor、仓库 owner 与有效 PR ruleset，阻止共享用户
   身份被误配置为可自审的独立 Agent。

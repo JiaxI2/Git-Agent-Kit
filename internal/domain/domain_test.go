@@ -1,9 +1,13 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestTaskValidateRequiresExecutorForOwnedStates(t *testing.T) {
-	task := Task{ID: "3", Title: "Architecture V2", State: TaskClaimed, Risk: RiskMedium, Mode: ExecutionRemote}
+	task := Task{ID: "3", Title: "Architecture", State: TaskClaimed, Risk: RiskMedium, Mode: ExecutionRemote}
 	if err := task.Validate(); err == nil {
 		t.Fatal("claimed task without executor was accepted")
 	}
@@ -14,7 +18,7 @@ func TestTaskValidateRequiresExecutorForOwnedStates(t *testing.T) {
 }
 
 func TestTaskValidateRejectsUnknownRisk(t *testing.T) {
-	task := Task{ID: "3", Title: "Architecture V2", State: TaskReady, Risk: "critical", Mode: ExecutionRemote}
+	task := Task{ID: "3", Title: "Architecture", State: TaskReady, Risk: "critical", Mode: ExecutionRemote}
 	if err := task.Validate(); err == nil {
 		t.Fatal("unknown risk was accepted")
 	}
@@ -59,5 +63,48 @@ func TestEffectValidatePreservesArgumentArray(t *testing.T) {
 	}
 	if got := effect.Args[1]; got != "./path with spaces" {
 		t.Fatalf("argument boundary changed: %q", got)
+	}
+}
+
+func TestPlanSealBindsStableContentAndRejectsTampering(t *testing.T) {
+	plan := Plan{
+		Repository: "C:/repo", BaseHead: strings.Repeat("a", 40), ConfigDigest: "sha256:" + strings.Repeat("b", 64),
+		Task:            Task{ID: "5", Title: "Inspectable Plan", State: TaskReady, Risk: RiskMedium, Mode: ExecutionLocal},
+		Effects:         []Effect{{Kind: EffectCommand, Command: "go", Args: []string{"test", "./path with spaces"}, Requires: []Capability{CapabilityCommand, CapabilityTest}}},
+		PolicyDecisions: []PlanPolicyDecision{{Operation: OperationPlanCreate, Decision: PolicyDecision{Allowed: true}}},
+		PreferredMode:   ExecutionLocal, CreatedAt: time.Unix(1, 0).UTC(),
+	}
+	sealed, err := plan.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.ID == "" || len(sealed.Requires) != 2 {
+		t.Fatalf("sealed plan=%+v", sealed)
+	}
+	again, err := plan.Seal()
+	if err != nil || again.ID != sealed.ID {
+		t.Fatalf("plan id is not stable: first=%s second=%s err=%v", sealed.ID, again.ID, err)
+	}
+	sealed.Task.Title = "tampered"
+	if err := sealed.Validate(); err == nil || !strings.Contains(err.Error(), "plan id mismatch") {
+		t.Fatalf("tampered plan error=%v", err)
+	}
+}
+
+func TestPlanRejectsInvalidSnapshotAndCapabilitySummary(t *testing.T) {
+	plan := Plan{
+		ID: "invalid", Repository: ".", BaseHead: "deadbeef", ConfigDigest: "sha256:bad",
+		Task:            Task{ID: "5", Title: "Inspectable Plan", State: TaskReady, Risk: RiskMedium, Mode: ExecutionLocal},
+		Effects:         []Effect{{Kind: EffectCommand, Command: "go", Requires: []Capability{CapabilityTest}}},
+		PolicyDecisions: []PlanPolicyDecision{{Operation: OperationPlanCreate, Decision: PolicyDecision{Allowed: true}}},
+		PreferredMode:   ExecutionLocal, CreatedAt: time.Unix(1, 0).UTC(),
+	}
+	if err := plan.Validate(); err == nil || !strings.Contains(err.Error(), "Git object id") {
+		t.Fatalf("invalid snapshot error=%v", err)
+	}
+	plan.BaseHead = strings.Repeat("a", 40)
+	plan.ConfigDigest = "sha256:" + strings.Repeat("b", 64)
+	if err := plan.Validate(); err == nil || !strings.Contains(err.Error(), "capabilities do not match") {
+		t.Fatalf("invalid capability summary error=%v", err)
 	}
 }
