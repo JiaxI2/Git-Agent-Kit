@@ -1,7 +1,7 @@
-# Architecture V2 Migration Map
+# 架构迁移图
 
-Architecture V2 is additive. Existing command output and safety behavior remain
-the compatibility contract until parity tests cover an application-backed path.
+架构迁移采用增量方式。现有命令输出和安全行为仍然是兼容性合同，直到应用服务
+路径具备等价测试。
 
 | Existing surface | Application use case | Port adapter | Current state |
 | --- | --- | --- | --- |
@@ -13,6 +13,7 @@ the compatibility contract until parity tests cover an application-backed path.
 | `gia pr request` | `PRService.Request` | existing Draft PR workflow | Port mapped; legacy CLI retains preflight checks |
 | `gia doctor` | `RepositoryService.Inspect` | existing doctor workflow | CLI and MCP application paths active |
 | `gia status` | `RepositoryService.Inspect` | existing repository status | MCP application path active; legacy CLI retained to preserve JSON shape |
+| `gia plan create/show/diff/apply` | `PlanService` | Git common-dir plan store and capability executor | CLI, MCP, and SDK application paths active |
 
 The shared legacy adapter lives in `internal/adapters/legacy`. It translates
 existing production types into Domain contracts and is composed by both the MCP

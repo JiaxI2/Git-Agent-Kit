@@ -1,4 +1,4 @@
-package v1
+package sdk
 
 import (
 	"context"
@@ -55,17 +55,29 @@ func buildServices(ports Ports) app.Services {
 	if ports.Evidence != nil {
 		evidence = evidenceAdapter{port: ports.Evidence}
 	}
+	var plans app.PlanRepository
+	if ports.Plans != nil {
+		plans = planStoreAdapter{port: ports.Plans}
+	}
+	var planContext app.PlanContext
+	if ports.PlanContext != nil {
+		planContext = planContextAdapter{port: ports.PlanContext}
+	}
 	var clock app.Clock
 	if ports.Clock != nil {
 		clock = clockAdapter{port: ports.Clock}
 	}
+	execution := app.ExecutionService{Selector: selector, Evidence: evidence, Clock: clock}
 	return app.Services{
 		Tasks:        app.TaskService{Tasks: tasks, Issues: issues, Claimer: claimer, Policy: policy},
 		Validation:   app.ValidationService{Tasks: tasks, Planner: validation},
 		Workspace:    app.WorkspaceService{Workspace: workspace},
 		PullRequests: app.PRService{PullRequests: pullRequests},
 		Repository:   app.RepositoryService{Repository: repository},
-		Execution:    app.ExecutionService{Selector: selector, Evidence: evidence, Clock: clock},
+		Execution:    execution,
+		Plans: app.PlanService{
+			Plans: plans, Context: planContext, Policy: policy, Execution: execution, Clock: clock,
+		},
 	}
 }
 
@@ -157,6 +169,29 @@ type evidenceAdapter struct{ port EvidenceStore }
 
 func (a evidenceAdapter) Append(ctx context.Context, id domain.TaskID, evidence []domain.Evidence) error {
 	return a.port.Append(ctx, string(id), exportEvidence(evidence))
+}
+
+type planStoreAdapter struct{ port PlanStore }
+
+func (a planStoreAdapter) Create(ctx context.Context, plan domain.Plan) error {
+	return a.port.Create(ctx, exportPlan(plan))
+}
+func (a planStoreAdapter) Get(ctx context.Context, id domain.PlanID) (domain.PlanRecord, error) {
+	record, err := a.port.Get(ctx, PlanID(id))
+	return importPlanRecord(record), err
+}
+func (a planStoreAdapter) BeginApply(ctx context.Context, id domain.PlanID, started time.Time) error {
+	return a.port.BeginApply(ctx, PlanID(id), started)
+}
+func (a planStoreAdapter) FinishApply(ctx context.Context, result domain.PlanApplyResult, finished time.Time) error {
+	return a.port.FinishApply(ctx, exportPlanApplyResult(result), finished)
+}
+
+type planContextAdapter struct{ port PlanContext }
+
+func (a planContextAdapter) Snapshot(ctx context.Context, repository string) (domain.PlanSnapshot, error) {
+	snapshot, err := a.port.Snapshot(ctx, repository)
+	return importPlanSnapshot(snapshot), err
 }
 
 type clockAdapter struct{ port Clock }
@@ -310,16 +345,126 @@ func exportRepositoryReport(report domain.RepositoryReport) RepositoryReport {
 func importEvidence(items []Evidence) []domain.Evidence {
 	result := make([]domain.Evidence, 0, len(items))
 	for _, item := range items {
-		result = append(result, domain.Evidence{Kind: item.Kind, Source: item.Source, Summary: item.Summary, Reference: item.Reference, Observed: item.Observed, Metadata: cloneAnyMap(item.Metadata)})
+		result = append(result, domain.Evidence{
+			Kind: item.Kind, Source: item.Source, Summary: item.Summary, Reference: item.Reference, Observed: item.Observed,
+			PlanID: domain.PlanID(item.PlanID), BaseHead: item.BaseHead, ConfigDigest: item.ConfigDigest, Metadata: cloneAnyMap(item.Metadata),
+		})
 	}
 	return result
 }
 func exportEvidence(items []domain.Evidence) []Evidence {
 	result := make([]Evidence, 0, len(items))
 	for _, item := range items {
-		result = append(result, Evidence{Kind: item.Kind, Source: item.Source, Summary: item.Summary, Reference: item.Reference, Observed: item.Observed, Metadata: cloneAnyMap(item.Metadata)})
+		result = append(result, Evidence{
+			Kind: item.Kind, Source: item.Source, Summary: item.Summary, Reference: item.Reference, Observed: item.Observed,
+			PlanID: PlanID(item.PlanID), BaseHead: item.BaseHead, ConfigDigest: item.ConfigDigest, Metadata: cloneAnyMap(item.Metadata),
+		})
 	}
 	return result
+}
+
+func importCreatePlanRequest(request CreatePlanRequest) domain.CreatePlanRequest {
+	effects := make([]domain.Effect, 0, len(request.Effects))
+	for _, effect := range request.Effects {
+		effects = append(effects, importEffect(effect))
+	}
+	return domain.CreatePlanRequest{
+		Repository: request.Repository, Task: importTask(request.Task), Effects: effects,
+		PreferredMode: domain.ExecutionMode(request.PreferredMode),
+	}
+}
+
+func importPlan(plan Plan) domain.Plan {
+	effects := make([]domain.Effect, 0, len(plan.Effects))
+	for _, effect := range plan.Effects {
+		effects = append(effects, importEffect(effect))
+	}
+	decisions := make([]domain.PlanPolicyDecision, 0, len(plan.PolicyDecisions))
+	for _, decision := range plan.PolicyDecisions {
+		decisions = append(decisions, domain.PlanPolicyDecision{
+			Operation: domain.Operation(decision.Operation),
+			Decision:  domain.PolicyDecision{Allowed: decision.Decision.Allowed, Reasons: append([]string(nil), decision.Decision.Reasons...)},
+		})
+	}
+	requires := make([]domain.Capability, 0, len(plan.Requires))
+	for _, capability := range plan.Requires {
+		requires = append(requires, domain.Capability(capability))
+	}
+	return domain.Plan{
+		ID: domain.PlanID(plan.ID), Repository: plan.Repository, BaseHead: plan.BaseHead,
+		Task: importTask(plan.Task), Effects: effects, PolicyDecisions: decisions, Requires: requires,
+		ConfigDigest: plan.ConfigDigest, PreferredMode: domain.ExecutionMode(plan.PreferredMode), CreatedAt: plan.CreatedAt,
+	}
+}
+
+func exportPlan(plan domain.Plan) Plan {
+	effects := make([]Effect, 0, len(plan.Effects))
+	for _, effect := range plan.Effects {
+		effects = append(effects, exportEffect(effect))
+	}
+	decisions := make([]PlanPolicyDecision, 0, len(plan.PolicyDecisions))
+	for _, decision := range plan.PolicyDecisions {
+		decisions = append(decisions, PlanPolicyDecision{
+			Operation: string(decision.Operation),
+			Decision:  PolicyDecision{Allowed: decision.Decision.Allowed, Reasons: append([]string(nil), decision.Decision.Reasons...)},
+		})
+	}
+	requires := make([]Capability, 0, len(plan.Requires))
+	for _, capability := range plan.Requires {
+		requires = append(requires, Capability(capability))
+	}
+	return Plan{
+		ID: PlanID(plan.ID), Repository: plan.Repository, BaseHead: plan.BaseHead,
+		Task: exportTask(plan.Task), Effects: effects, PolicyDecisions: decisions, Requires: requires,
+		ConfigDigest: plan.ConfigDigest, PreferredMode: ExecutionMode(plan.PreferredMode), CreatedAt: plan.CreatedAt,
+	}
+}
+
+func importPlanSnapshot(snapshot PlanSnapshot) domain.PlanSnapshot {
+	return domain.PlanSnapshot{Repository: snapshot.Repository, Head: snapshot.Head, ConfigDigest: snapshot.ConfigDigest}
+}
+
+func exportPlanSnapshot(snapshot domain.PlanSnapshot) PlanSnapshot {
+	return PlanSnapshot{Repository: snapshot.Repository, Head: snapshot.Head, ConfigDigest: snapshot.ConfigDigest}
+}
+
+func importPlanRecord(record PlanRecord) domain.PlanRecord {
+	return domain.PlanRecord{
+		Plan: importPlan(record.Plan),
+		Status: domain.PlanStatus{
+			PlanID: domain.PlanID(record.Status.PlanID), State: domain.PlanState(record.Status.State),
+			StartedAt: record.Status.StartedAt, FinishedAt: record.Status.FinishedAt, Error: record.Status.Error,
+		},
+	}
+}
+
+func exportPlanRecord(record domain.PlanRecord) PlanRecord {
+	return PlanRecord{
+		Plan: exportPlan(record.Plan),
+		Status: PlanStatus{
+			PlanID: PlanID(record.Status.PlanID), State: PlanState(record.Status.State),
+			StartedAt: record.Status.StartedAt, FinishedAt: record.Status.FinishedAt, Error: record.Status.Error,
+		},
+	}
+}
+
+func exportPlanDiff(diff domain.PlanDiff) PlanDiff {
+	return PlanDiff{
+		PlanID: PlanID(diff.PlanID), Expected: exportPlanSnapshot(diff.Expected), Actual: exportPlanSnapshot(diff.Actual),
+		Status: PlanState(diff.Status), HeadMatches: diff.HeadMatches, ConfigMatches: diff.ConfigMatches,
+		Ready: diff.Ready, Reasons: append([]string(nil), diff.Reasons...),
+	}
+}
+
+func exportPlanApplyResult(result domain.PlanApplyResult) PlanApplyResult {
+	return PlanApplyResult{
+		PlanID: PlanID(result.PlanID), State: PlanState(result.State),
+		Decision: PlanPolicyDecision{
+			Operation: string(result.Decision.Operation),
+			Decision:  PolicyDecision{Allowed: result.Decision.Decision.Allowed, Reasons: append([]string(nil), result.Decision.Decision.Reasons...)},
+		},
+		Evidence: exportEvidence(result.Evidence), Error: result.Error,
+	}
 }
 
 func cloneStringMap(source map[string]string) map[string]string {

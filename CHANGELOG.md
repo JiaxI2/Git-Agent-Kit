@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **feat(plan)**: 实施架构演进 **V2.1** 的不可变 Plan：内容哈希 ID 绑定
+  repository、base HEAD、任务、effects、策略、capabilities 与配置摘要；Git
+  common-dir 排他租约保证最多执行一次，Evidence 绑定 Plan ID、HEAD 与配置摘要。
+- **feat(interfaces)**: CLI、MCP tools/resource 与 Go SDK 共享 Plan
+  `create/show/diff/apply` 语义，并覆盖 JSON 退出码、资源读取和外部消费者行为。
+- **refactor(architecture)**: 公共 SDK 从 `pkg/sdk/v1` 迁移为无版本目录
+  `pkg/sdk`，合并无版本架构文档，并增加门禁，阻止架构演进号进入目录和代码。
 - **feat**: 新增 `identityMode` / `approvalMode` JSON、YAML 配置，
   `doctor` 对照实际 GitHub actor、仓库 owner 与有效 PR ruleset，阻止共享用户
   身份被误配置为可自审的独立 Agent。

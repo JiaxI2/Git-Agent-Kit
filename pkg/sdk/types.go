@@ -1,5 +1,5 @@
-// Package v1 exposes the stable public Go API for Git Agent Kit.
-package v1
+// Package sdk exposes the stable public Go API for Git Agent Kit.
+package sdk
 
 import (
 	"context"
@@ -10,13 +10,19 @@ type Capability string
 type TaskState string
 type ExecutionMode string
 type Risk string
+type PlanID string
+type PlanState string
 
 const (
-	ModeLocal  ExecutionMode = "local"
-	ModeRemote ExecutionMode = "remote"
-	RiskLow    Risk          = "low"
-	RiskMedium Risk          = "medium"
-	RiskHigh   Risk          = "high"
+	ModeLocal    ExecutionMode = "local"
+	ModeRemote   ExecutionMode = "remote"
+	RiskLow      Risk          = "low"
+	RiskMedium   Risk          = "medium"
+	RiskHigh     Risk          = "high"
+	PlanPlanned  PlanState     = "planned"
+	PlanApplying PlanState     = "applying"
+	PlanApplied  PlanState     = "applied"
+	PlanFailed   PlanState     = "failed"
 )
 
 type ExecutorIdentity struct {
@@ -60,12 +66,78 @@ type Effect struct {
 }
 
 type Evidence struct {
-	Kind      string         `json:"kind"`
-	Source    string         `json:"source"`
-	Summary   string         `json:"summary"`
-	Reference string         `json:"reference,omitempty"`
-	Observed  time.Time      `json:"observed"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
+	Kind         string         `json:"kind"`
+	Source       string         `json:"source"`
+	Summary      string         `json:"summary"`
+	Reference    string         `json:"reference,omitempty"`
+	Observed     time.Time      `json:"observed"`
+	PlanID       PlanID         `json:"planId,omitempty"`
+	BaseHead     string         `json:"baseHead,omitempty"`
+	ConfigDigest string         `json:"configDigest,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+}
+
+type PlanSnapshot struct {
+	Repository   string `json:"repository"`
+	Head         string `json:"head"`
+	ConfigDigest string `json:"configDigest"`
+}
+
+type PlanPolicyDecision struct {
+	Operation string         `json:"operation"`
+	Decision  PolicyDecision `json:"decision"`
+}
+
+type CreatePlanRequest struct {
+	Repository    string        `json:"repository"`
+	Task          Task          `json:"task"`
+	Effects       []Effect      `json:"effects"`
+	PreferredMode ExecutionMode `json:"preferredMode"`
+}
+
+type Plan struct {
+	ID              PlanID               `json:"id"`
+	Repository      string               `json:"repository"`
+	BaseHead        string               `json:"baseHead"`
+	Task            Task                 `json:"task"`
+	Effects         []Effect             `json:"effects"`
+	PolicyDecisions []PlanPolicyDecision `json:"policyDecisions"`
+	Requires        []Capability         `json:"requires"`
+	ConfigDigest    string               `json:"configDigest"`
+	PreferredMode   ExecutionMode        `json:"preferredMode"`
+	CreatedAt       time.Time            `json:"createdAt"`
+}
+
+type PlanStatus struct {
+	PlanID     PlanID    `json:"planId"`
+	State      PlanState `json:"state"`
+	StartedAt  time.Time `json:"startedAt,omitempty"`
+	FinishedAt time.Time `json:"finishedAt,omitempty"`
+	Error      string    `json:"error,omitempty"`
+}
+
+type PlanRecord struct {
+	Plan   Plan       `json:"plan"`
+	Status PlanStatus `json:"status"`
+}
+
+type PlanDiff struct {
+	PlanID        PlanID       `json:"planId"`
+	Expected      PlanSnapshot `json:"expected"`
+	Actual        PlanSnapshot `json:"actual"`
+	Status        PlanState    `json:"status"`
+	HeadMatches   bool         `json:"headMatches"`
+	ConfigMatches bool         `json:"configMatches"`
+	Ready         bool         `json:"ready"`
+	Reasons       []string     `json:"reasons,omitempty"`
+}
+
+type PlanApplyResult struct {
+	PlanID   PlanID             `json:"planId"`
+	State    PlanState          `json:"state"`
+	Decision PlanPolicyDecision `json:"decision"`
+	Evidence []Evidence         `json:"evidence,omitempty"`
+	Error    string             `json:"error,omitempty"`
 }
 
 type ValidationPlan struct {
@@ -183,6 +255,17 @@ type EvidenceStore interface {
 	Append(context.Context, string, []Evidence) error
 }
 
+type PlanStore interface {
+	Create(context.Context, Plan) error
+	Get(context.Context, PlanID) (PlanRecord, error)
+	BeginApply(context.Context, PlanID, time.Time) error
+	FinishApply(context.Context, PlanApplyResult, time.Time) error
+}
+
+type PlanContext interface {
+	Snapshot(context.Context, string) (PlanSnapshot, error)
+}
+
 type Clock interface {
 	Now() time.Time
 }
@@ -198,5 +281,7 @@ type Ports struct {
 	Policy       Policy
 	Executors    []Executor
 	Evidence     EvidenceStore
+	Plans        PlanStore
+	PlanContext  PlanContext
 	Clock        Clock
 }

@@ -40,6 +40,15 @@ JSON/YAML/YML 均须拒绝 unknown fields 和多文档输入；显式 `--config`
    `PENDING_USER_APPROVAL`；
 5. CLI 不暴露 approve、merge 或 release 子命令。
 
+Plan 聚焦测试还必须覆盖：
+
+1. 相同内容得到稳定 SHA-256 ID，持久化内容被修改后读取失败；
+2. `create/show/diff` 不调用执行器，HEAD 或配置摘要漂移时 `apply` 失败关闭；
+3. 两个并发 `apply` 只有一个取得 Git common-dir 租约，成功或失败后均拒绝重放；
+4. 计划和运行态不污染 worktree，新 Store 实例可恢复计划、租约与结果；
+5. Evidence 绑定 Plan ID、base HEAD 和配置摘要；CLI、MCP、Go SDK 走同一服务；
+6. 架构演进号不得进入目录、包名、代码标识符或非 README/CHANGELOG 文档。
+
 ### T1 本地沙箱集成
 
 运行：

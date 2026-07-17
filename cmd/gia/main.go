@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ import (
 )
 
 var version = "dev"
+var buildApplicationServices = legacy.NewServices
 
 type output struct {
 	OK       bool        `json:"ok"`
@@ -116,6 +118,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdWorktree(ctx, args[1:])
 	case "validate":
 		return cmdValidate(ctx, args[1:])
+	case "plan":
+		return cmdPlan(ctx, args[1:])
 	case "handoff":
 		return cmdHandoff(ctx, args[1:])
 	case "status":
@@ -590,6 +594,81 @@ func cmdStatus(ctx context.Context, args []string) error {
 	return nil
 }
 
+func cmdPlan(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: gia plan create|show|diff|apply")
+	}
+	command := args[0]
+	fs := flag.NewFlagSet("plan "+command, flag.ContinueOnError)
+	repo := fs.String("repo", ".", "repository")
+	configPath := addConfigFlag(fs)
+	input := fs.String("input", "", "repository-local JSON plan request")
+	id := fs.String("id", "", "content-addressed plan id")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	planID := strings.TrimSpace(*id)
+	if planID == "" && fs.NArg() == 1 {
+		planID = strings.TrimSpace(fs.Arg(0))
+	} else if fs.NArg() != 0 {
+		return errors.New("plan accepts at most one positional id")
+	}
+	services := buildApplicationServices(*repo, *configPath)
+	var (
+		data any
+		err  error
+	)
+	switch command {
+	case "create":
+		if strings.TrimSpace(*input) == "" {
+			return errors.New("--input is required")
+		}
+		content, readErr := readRepositoryFile(*repo, *input)
+		if readErr != nil {
+			return readErr
+		}
+		var request domain.CreatePlanRequest
+		decoder := json.NewDecoder(strings.NewReader(string(content)))
+		decoder.DisallowUnknownFields()
+		if decodeErr := decoder.Decode(&request); decodeErr != nil {
+			return fmt.Errorf("decode plan request: %w", decodeErr)
+		}
+		var extra any
+		if decodeErr := decoder.Decode(&extra); !errors.Is(decodeErr, io.EOF) {
+			if decodeErr == nil {
+				return errors.New("plan request must contain exactly one JSON value")
+			}
+			return fmt.Errorf("decode plan request: %w", decodeErr)
+		}
+		if strings.TrimSpace(request.Repository) == "" {
+			request.Repository = *repo
+		}
+		data, err = services.Plans.Create(ctx, request)
+	case "show":
+		if planID == "" {
+			return errors.New("plan id is required")
+		}
+		data, err = services.Plans.Show(ctx, domain.PlanID(planID))
+	case "diff":
+		if planID == "" {
+			return errors.New("plan id is required")
+		}
+		data, err = services.Plans.Diff(ctx, domain.PlanID(planID))
+	case "apply":
+		if planID == "" {
+			return errors.New("plan id is required")
+		}
+		data, err = services.Plans.Apply(ctx, domain.PlanID(planID))
+	default:
+		return errors.New("usage: gia plan create|show|diff|apply")
+	}
+	if err != nil {
+		return err
+	}
+	emit(output{OK: true, Command: "plan " + command, Data: data})
+	return nil
+}
+
 func cmdFeedback(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("feedback", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "repository")
@@ -655,7 +734,7 @@ func commandPath(args []string) string {
 	command := args[0]
 	if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		switch command {
-		case "issue", "pr", "worktree":
+		case "issue", "pr", "worktree", "plan":
 			command += " " + args[1]
 		}
 	}
@@ -675,6 +754,7 @@ Commands:
   pr         request a Draft PR for user approval
   worktree   create/remove isolated validation worktrees
   validate   run smoke/full/release profile bound to a commit
+  plan       create, inspect, compare, or apply an immutable execution plan
   handoff    transfer single-writer ownership through PR metadata
   status     inspect branch/worktree/repository state
   feedback   record iterative kit feedback
@@ -698,7 +778,7 @@ func requestedHelp(args []string) ([]string, bool) {
 	if len(args) >= 2 && isHelpToken(args[1]) {
 		return args[:1], true
 	}
-	if len(args) >= 3 && (args[0] == "issue" || args[0] == "pr" || args[0] == "worktree") && isHelpToken(args[2]) {
+	if len(args) >= 3 && (args[0] == "issue" || args[0] == "pr" || args[0] == "worktree" || args[0] == "plan") && isHelpToken(args[2]) {
 		return args[:2], true
 	}
 	return nil, false
@@ -736,6 +816,11 @@ var commandHelp = map[string]string{
 	"worktree create": "Usage: gia worktree create [--repo <path>] (--pr <number> | --ref <remote-ref>) [--root <path>]\n",
 	"worktree remove": "Usage: gia worktree remove [--repo <path>] --path <worktree-path> [--force]\n",
 	"validate":        "Usage: gia validate [--repo <path>] [--config <path>] [--profile smoke|full|release] [--expected-head <sha>]\n",
+	"plan":            "Usage: gia plan create|show|diff|apply\nPersist and inspect an immutable plan before explicitly applying it.\n",
+	"plan create":     "Usage: gia plan create [--repo <path>] [--config <path>] --input <request.json>\n",
+	"plan show":       "Usage: gia plan show [--repo <path>] [--config <path>] <plan-id>\n",
+	"plan diff":       "Usage: gia plan diff [--repo <path>] [--config <path>] <plan-id>\n",
+	"plan apply":      "Usage: gia plan apply [--repo <path>] [--config <path>] <plan-id>\n",
 	"handoff":         "Usage: gia handoff [--repo <path>] --pr <number> --to <executor> --state <state> [--note <text>]\n",
 	"status":          "Usage: gia status [--repo <path>]\nShow branch, HEAD, cleanliness, and worktree state.\n",
 	"feedback":        "Usage: gia feedback [--repo <path>] [--category bug|improvement|ux|security] --message <text> [--pr <number>]\n",

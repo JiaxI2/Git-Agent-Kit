@@ -58,6 +58,17 @@ type EvidenceRepository interface {
 	Append(context.Context, domain.TaskID, []domain.Evidence) error
 }
 
+type PlanRepository interface {
+	Create(context.Context, domain.Plan) error
+	Get(context.Context, domain.PlanID) (domain.PlanRecord, error)
+	BeginApply(context.Context, domain.PlanID, time.Time) error
+	FinishApply(context.Context, domain.PlanApplyResult, time.Time) error
+}
+
+type PlanContext interface {
+	Snapshot(context.Context, string) (domain.PlanSnapshot, error)
+}
+
 type Clock interface {
 	Now() time.Time
 }
@@ -73,6 +84,7 @@ type Services struct {
 	PullRequests PRService
 	Repository   RepositoryService
 	Execution    ExecutionService
+	Plans        PlanService
 }
 
 type TaskService struct {
@@ -251,6 +263,17 @@ type ExecutionService struct {
 }
 
 func (s ExecutionService) Run(ctx context.Context, task domain.Task, effects []domain.Effect, preferred domain.ExecutionMode) ([]domain.Evidence, error) {
+	return s.run(ctx, task, effects, preferred, domain.Plan{})
+}
+
+func (s ExecutionService) RunPlan(ctx context.Context, plan domain.Plan) ([]domain.Evidence, error) {
+	if err := plan.Validate(); err != nil {
+		return nil, err
+	}
+	return s.run(ctx, plan.Task, plan.Effects, plan.PreferredMode, plan)
+}
+
+func (s ExecutionService) run(ctx context.Context, task domain.Task, effects []domain.Effect, preferred domain.ExecutionMode, plan domain.Plan) ([]domain.Evidence, error) {
 	if s.Selector == nil {
 		return nil, errors.New("executor selector is required")
 	}
@@ -289,6 +312,11 @@ func (s ExecutionService) Run(ctx context.Context, task domain.Task, effects []d
 		if evidence[index].Observed.IsZero() {
 			evidence[index].Observed = clock.Now()
 		}
+		if plan.ID != "" {
+			evidence[index].PlanID = plan.ID
+			evidence[index].BaseHead = plan.BaseHead
+			evidence[index].ConfigDigest = plan.ConfigDigest
+		}
 	}
 	if s.Evidence != nil {
 		if err := s.Evidence.Append(ctx, task.ID, evidence); err != nil {
@@ -296,6 +324,206 @@ func (s ExecutionService) Run(ctx context.Context, task domain.Task, effects []d
 		}
 	}
 	return evidence, nil
+}
+
+type PlanService struct {
+	Plans     PlanRepository
+	Context   PlanContext
+	Policy    Policy
+	Execution ExecutionService
+	Clock     Clock
+}
+
+func (s PlanService) Create(ctx context.Context, request domain.CreatePlanRequest) (domain.Plan, error) {
+	if s.Plans == nil || s.Context == nil || s.Policy == nil {
+		return domain.Plan{}, errors.New("plan repository, context, and policy are required")
+	}
+	if strings.TrimSpace(request.Repository) == "" {
+		return domain.Plan{}, errors.New("plan repository is required")
+	}
+	if err := request.Task.Validate(); err != nil {
+		return domain.Plan{}, fmt.Errorf("invalid plan task: %w", err)
+	}
+	if len(request.Effects) == 0 {
+		return domain.Plan{}, errors.New("plan effects are required")
+	}
+	for _, effect := range request.Effects {
+		if err := effect.Validate(); err != nil {
+			return domain.Plan{}, fmt.Errorf("invalid plan effect: %w", err)
+		}
+	}
+	snapshot, err := s.Context.Snapshot(ctx, request.Repository)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	if err := snapshot.Validate(); err != nil {
+		return domain.Plan{}, err
+	}
+	decision := s.Policy.Evaluate(ctx, request.Task, domain.OperationPlanCreate)
+	if !decision.Allowed {
+		return domain.Plan{}, fmt.Errorf("plan creation denied: %s", strings.Join(decision.Reasons, "; "))
+	}
+	applyDecision := s.Policy.Evaluate(ctx, request.Task, domain.OperationPlanApply)
+	preferred := request.PreferredMode
+	if preferred == "" {
+		preferred = request.Task.Mode
+	}
+	plan, err := (domain.Plan{
+		Repository: snapshot.Repository, BaseHead: snapshot.Head, ConfigDigest: snapshot.ConfigDigest,
+		Task: request.Task, Effects: append([]domain.Effect(nil), request.Effects...), PreferredMode: preferred,
+		PolicyDecisions: []domain.PlanPolicyDecision{
+			{Operation: domain.OperationPlanCreate, Decision: decision},
+			{Operation: domain.OperationPlanApply, Decision: applyDecision},
+		},
+		CreatedAt: s.now(),
+	}).Seal()
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	if err := s.Plans.Create(ctx, plan); err != nil {
+		return domain.Plan{}, err
+	}
+	return plan, nil
+}
+
+func (s PlanService) Show(ctx context.Context, id domain.PlanID) (domain.PlanRecord, error) {
+	if s.Plans == nil {
+		return domain.PlanRecord{}, errors.New("plan repository is required")
+	}
+	if strings.TrimSpace(string(id)) == "" {
+		return domain.PlanRecord{}, errors.New("plan id is required")
+	}
+	record, err := s.Plans.Get(ctx, id)
+	if err != nil {
+		return domain.PlanRecord{}, err
+	}
+	if record.Plan.ID != id || record.Status.PlanID != id {
+		return domain.PlanRecord{}, errors.New("plan repository returned mismatched plan id")
+	}
+	if err := record.Plan.Validate(); err != nil {
+		return domain.PlanRecord{}, err
+	}
+	if err := record.Status.Validate(); err != nil {
+		return domain.PlanRecord{}, err
+	}
+	return record, nil
+}
+
+func (s PlanService) Diff(ctx context.Context, id domain.PlanID) (domain.PlanDiff, error) {
+	if s.Context == nil {
+		return domain.PlanDiff{}, errors.New("plan context is required")
+	}
+	record, err := s.Show(ctx, id)
+	if err != nil {
+		return domain.PlanDiff{}, err
+	}
+	actual, err := s.Context.Snapshot(ctx, record.Plan.Repository)
+	if err != nil {
+		return domain.PlanDiff{}, err
+	}
+	if err := actual.Validate(); err != nil {
+		return domain.PlanDiff{}, err
+	}
+	return comparePlan(record, actual), nil
+}
+
+func (s PlanService) Apply(ctx context.Context, id domain.PlanID) (domain.PlanApplyResult, error) {
+	if s.Plans == nil || s.Context == nil || s.Policy == nil {
+		return domain.PlanApplyResult{}, errors.New("plan repository, context, and policy are required")
+	}
+	diff, err := s.Diff(ctx, id)
+	if err != nil {
+		return domain.PlanApplyResult{}, err
+	}
+	if !diff.Ready {
+		return domain.PlanApplyResult{}, fmt.Errorf("plan is not ready: %s", strings.Join(diff.Reasons, "; "))
+	}
+	record, err := s.Show(ctx, id)
+	if err != nil {
+		return domain.PlanApplyResult{}, err
+	}
+	decision := s.Policy.Evaluate(ctx, record.Plan.Task, domain.OperationPlanApply)
+	planDecision := domain.PlanPolicyDecision{Operation: domain.OperationPlanApply, Decision: decision}
+	if !decision.Allowed {
+		return domain.PlanApplyResult{PlanID: id, State: domain.PlanFailed, Decision: planDecision}, fmt.Errorf("plan apply denied: %s", strings.Join(decision.Reasons, "; "))
+	}
+	started := s.now()
+	if err := s.Plans.BeginApply(ctx, id, started); err != nil {
+		return domain.PlanApplyResult{}, err
+	}
+	actual, snapshotErr := s.Context.Snapshot(ctx, record.Plan.Repository)
+	if snapshotErr != nil {
+		result := domain.PlanApplyResult{PlanID: id, State: domain.PlanFailed, Decision: planDecision, Error: snapshotErr.Error()}
+		return result, s.finishFailure(ctx, result, snapshotErr)
+	}
+	lockedDiff := comparePlan(domain.PlanRecord{Plan: record.Plan, Status: domain.PlanStatus{PlanID: id, State: domain.PlanPlanned}}, actual)
+	if !lockedDiff.Ready {
+		driftErr := fmt.Errorf("plan changed while acquiring apply lease: %s", strings.Join(lockedDiff.Reasons, "; "))
+		result := domain.PlanApplyResult{PlanID: id, State: domain.PlanFailed, Decision: planDecision, Error: driftErr.Error()}
+		return result, s.finishFailure(ctx, result, driftErr)
+	}
+	evidence, executeErr := s.Execution.RunPlan(ctx, record.Plan)
+	state := domain.PlanApplied
+	message := ""
+	if executeErr != nil {
+		state = domain.PlanFailed
+		message = executeErr.Error()
+	}
+	result := domain.PlanApplyResult{PlanID: id, State: state, Decision: planDecision, Evidence: evidence, Error: message}
+	if finishErr := s.Plans.FinishApply(ctx, result, s.now()); finishErr != nil {
+		if executeErr != nil {
+			return result, fmt.Errorf("%v; record plan result: %w", executeErr, finishErr)
+		}
+		return result, fmt.Errorf("record plan result: %w", finishErr)
+	}
+	return result, executeErr
+}
+
+func (s PlanService) finishFailure(ctx context.Context, result domain.PlanApplyResult, cause error) error {
+	if finishErr := s.Plans.FinishApply(ctx, result, s.now()); finishErr != nil {
+		return fmt.Errorf("%v; record plan failure: %w", cause, finishErr)
+	}
+	return cause
+}
+
+func (s PlanService) now() time.Time {
+	clock := s.Clock
+	if clock == nil {
+		clock = SystemClock{}
+	}
+	return clock.Now()
+}
+
+func comparePlan(record domain.PlanRecord, actual domain.PlanSnapshot) domain.PlanDiff {
+	plan := record.Plan
+	diff := domain.PlanDiff{
+		PlanID:   idOrStatus(plan.ID, record.Status.PlanID),
+		Expected: domain.PlanSnapshot{Repository: plan.Repository, Head: plan.BaseHead, ConfigDigest: plan.ConfigDigest},
+		Actual:   actual, Status: record.Status.State,
+	}
+	if actual.Repository != plan.Repository {
+		diff.Reasons = append(diff.Reasons, "repository changed")
+	}
+	diff.HeadMatches = actual.Head == plan.BaseHead
+	if !diff.HeadMatches {
+		diff.Reasons = append(diff.Reasons, "HEAD changed")
+	}
+	diff.ConfigMatches = actual.ConfigDigest == plan.ConfigDigest
+	if !diff.ConfigMatches {
+		diff.Reasons = append(diff.Reasons, "config changed")
+	}
+	if record.Status.State != domain.PlanPlanned {
+		diff.Reasons = append(diff.Reasons, fmt.Sprintf("plan status is %s", record.Status.State))
+	}
+	diff.Ready = len(diff.Reasons) == 0
+	return diff
+}
+
+func idOrStatus(planID, statusID domain.PlanID) domain.PlanID {
+	if planID != "" {
+		return planID
+	}
+	return statusID
 }
 
 type CapabilitySelector struct {

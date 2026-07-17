@@ -102,7 +102,7 @@ func (s Server) Handle(ctx context.Context, request Request) *Response {
 			"capabilities": map[string]any{
 				"tools": map[string]any{}, "resources": map[string]any{}, "prompts": map[string]any{},
 			},
-			"serverInfo": map[string]string{"name": "gia-mcp", "version": "v2"},
+			"serverInfo": map[string]string{"name": "gia-mcp", "version": "current"},
 		})
 	case "tools/list":
 		response = success(request.ID, map[string]any{"tools": tools()})
@@ -115,6 +115,8 @@ func (s Server) Handle(ctx context.Context, request Request) *Response {
 		response = success(request.ID, s.callTool(ctx, call))
 	case "resources/list":
 		response = success(request.ID, map[string]any{"resources": resources()})
+	case "resources/templates/list":
+		response = success(request.ID, map[string]any{"resourceTemplates": resourceTemplates()})
 	case "resources/read":
 		var read resourceRead
 		if err := json.Unmarshal(request.Params, &read); err != nil || strings.TrimSpace(read.URI) == "" {
@@ -177,6 +179,21 @@ func (s Server) callTool(ctx context.Context, call toolCall) toolResult {
 		value, err = s.Services.Repository.Inspect(ctx, domain.RepositoryRequest{Repository: s.Repository, Mode: "doctor"})
 	case "gia_repo_inspect":
 		value, err = s.Services.Repository.Inspect(ctx, domain.RepositoryRequest{Repository: s.Repository, Mode: "inspect"})
+	case "gia_plan_create":
+		var request domain.CreatePlanRequest
+		request, err = planRequest(call.Arguments)
+		if err == nil {
+			if strings.TrimSpace(request.Repository) == "" {
+				request.Repository = s.Repository
+			}
+			value, err = s.Services.Plans.Create(ctx, request)
+		}
+	case "gia_plan_show":
+		value, err = s.Services.Plans.Show(ctx, domain.PlanID(stringArgument(call.Arguments, "planId")))
+	case "gia_plan_diff":
+		value, err = s.Services.Plans.Diff(ctx, domain.PlanID(stringArgument(call.Arguments, "planId")))
+	case "gia_plan_apply":
+		value, err = s.Services.Plans.Apply(ctx, domain.PlanID(stringArgument(call.Arguments, "planId")))
 	default:
 		err = errors.New("unknown tool")
 	}
@@ -208,7 +225,19 @@ func (s Server) readResource(ctx context.Context, uri string) (map[string]any, e
 	case "gia://validation":
 		value = map[string]any{"tool": "gia_validation_plan", "profiles": []string{"smoke", "full", "release"}}
 	default:
-		return nil, fmt.Errorf("unknown resource %q", uri)
+		const planPrefix = "gia://plans/"
+		if !strings.HasPrefix(uri, planPrefix) {
+			return nil, fmt.Errorf("unknown resource %q", uri)
+		}
+		id := strings.TrimSpace(strings.TrimPrefix(uri, planPrefix))
+		if id == "" || strings.Contains(id, "/") {
+			return nil, errors.New("plan resource requires one plan id")
+		}
+		record, err := s.Services.Plans.Show(ctx, domain.PlanID(id))
+		if err != nil {
+			return nil, err
+		}
+		value = record
 	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
@@ -226,6 +255,10 @@ func tools() []map[string]any {
 		{"name": "gia_validation_plan", "description": "Build a capability-aware validation plan", "inputSchema": schema("taskId")},
 		{"name": "gia_doctor", "description": "Inspect governance prerequisites", "inputSchema": object},
 		{"name": "gia_repo_inspect", "description": "Inspect repository governance metadata", "inputSchema": object},
+		{"name": "gia_plan_create", "description": "Create an immutable execution plan without applying effects", "inputSchema": planCreateSchema()},
+		{"name": "gia_plan_show", "description": "Show a persisted execution plan", "inputSchema": schema("planId")},
+		{"name": "gia_plan_diff", "description": "Compare a plan with current repository state", "inputSchema": schema("planId")},
+		{"name": "gia_plan_apply", "description": "Apply a ready plan exactly once", "inputSchema": schema("planId")},
 	}
 }
 
@@ -234,6 +267,12 @@ func resources() []map[string]string {
 		{"uri": "gia://tasks", "name": "Governed tasks", "mimeType": "application/json"},
 		{"uri": "gia://repository", "name": "Repository governance", "mimeType": "application/json"},
 		{"uri": "gia://validation", "name": "Validation entrypoint", "mimeType": "application/json"},
+	}
+}
+
+func resourceTemplates() []map[string]string {
+	return []map[string]string{
+		{"uriTemplate": "gia://plans/{planId}", "name": "Persisted execution plan", "mimeType": "application/json"},
 	}
 }
 
@@ -267,6 +306,34 @@ func schema(required ...string) map[string]any {
 		value["required"] = required
 	}
 	return value
+}
+
+func planCreateSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"repository":    map[string]string{"type": "string"},
+			"task":          map[string]string{"type": "object"},
+			"effects":       map[string]string{"type": "array"},
+			"preferredMode": map[string]string{"type": "string"},
+		},
+		"required":             []string{"task", "effects"},
+		"additionalProperties": false,
+	}
+}
+
+func planRequest(arguments map[string]any) (domain.CreatePlanRequest, error) {
+	encoded, err := json.Marshal(arguments)
+	if err != nil {
+		return domain.CreatePlanRequest{}, err
+	}
+	var request domain.CreatePlanRequest
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return domain.CreatePlanRequest{}, fmt.Errorf("invalid plan request: %w", err)
+	}
+	return request, nil
 }
 
 func stringArgument(arguments map[string]any, name string) string {

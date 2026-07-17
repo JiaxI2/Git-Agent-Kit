@@ -2,8 +2,12 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -15,6 +19,8 @@ type Risk string
 type Capability string
 type Operation string
 type EffectKind string
+type PlanID string
+type PlanState string
 
 const (
 	TaskReady      TaskState = "ready"
@@ -60,9 +66,18 @@ const (
 	OperationValidation   Operation  = "validation.plan"
 	OperationPullRequest  Operation  = "pull_request.request"
 	OperationRepoInspect  Operation  = "repository.inspect"
+	OperationPlanCreate   Operation  = "plan.create"
+	OperationPlanApply    Operation  = "plan.apply"
 	EffectCommand         EffectKind = "command"
 	EffectFileWrite       EffectKind = "file.write"
 	EffectRemoteOperation EffectKind = "remote.operation"
+)
+
+const (
+	PlanPlanned  PlanState = "planned"
+	PlanApplying PlanState = "applying"
+	PlanApplied  PlanState = "applied"
+	PlanFailed   PlanState = "failed"
 )
 
 type ExecutorIdentity struct {
@@ -174,12 +189,199 @@ func (e Effect) Validate() error {
 }
 
 type Evidence struct {
-	Kind      string         `json:"kind"`
-	Source    string         `json:"source"`
-	Summary   string         `json:"summary"`
-	Reference string         `json:"reference,omitempty"`
-	Observed  time.Time      `json:"observed"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
+	Kind         string         `json:"kind"`
+	Source       string         `json:"source"`
+	Summary      string         `json:"summary"`
+	Reference    string         `json:"reference,omitempty"`
+	Observed     time.Time      `json:"observed"`
+	PlanID       PlanID         `json:"planId,omitempty"`
+	BaseHead     string         `json:"baseHead,omitempty"`
+	ConfigDigest string         `json:"configDigest,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+}
+
+type PlanSnapshot struct {
+	Repository   string `json:"repository"`
+	Head         string `json:"head"`
+	ConfigDigest string `json:"configDigest"`
+}
+
+func (s PlanSnapshot) Validate() error {
+	if strings.TrimSpace(s.Repository) == "" {
+		return errors.New("plan repository is required")
+	}
+	if !validObjectID(s.Head) {
+		return fmt.Errorf("plan head %q is not a Git object id", s.Head)
+	}
+	if !validDigest(s.ConfigDigest) {
+		return fmt.Errorf("plan config digest %q is invalid", s.ConfigDigest)
+	}
+	return nil
+}
+
+type PlanPolicyDecision struct {
+	Operation Operation      `json:"operation"`
+	Decision  PolicyDecision `json:"decision"`
+}
+
+type CreatePlanRequest struct {
+	Repository    string        `json:"repository"`
+	Task          Task          `json:"task"`
+	Effects       []Effect      `json:"effects"`
+	PreferredMode ExecutionMode `json:"preferredMode"`
+}
+
+type Plan struct {
+	ID              PlanID               `json:"id"`
+	Repository      string               `json:"repository"`
+	BaseHead        string               `json:"baseHead"`
+	Task            Task                 `json:"task"`
+	Effects         []Effect             `json:"effects"`
+	PolicyDecisions []PlanPolicyDecision `json:"policyDecisions"`
+	Requires        []Capability         `json:"requires"`
+	ConfigDigest    string               `json:"configDigest"`
+	PreferredMode   ExecutionMode        `json:"preferredMode"`
+	CreatedAt       time.Time            `json:"createdAt"`
+}
+
+func (p Plan) Seal() (Plan, error) {
+	p.ID = ""
+	p.Requires = requiredCapabilities(p.Effects)
+	if err := p.validateContent(); err != nil {
+		return Plan{}, err
+	}
+	id, err := p.ComputeID()
+	if err != nil {
+		return Plan{}, err
+	}
+	p.ID = id
+	return p, nil
+}
+
+func (p Plan) ComputeID() (PlanID, error) {
+	p.ID = ""
+	encoded, err := json.Marshal(p)
+	if err != nil {
+		return "", fmt.Errorf("encode plan: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return PlanID(hex.EncodeToString(digest[:])), nil
+}
+
+func (p Plan) Validate() error {
+	if strings.TrimSpace(string(p.ID)) == "" {
+		return errors.New("plan id is required")
+	}
+	if err := p.validateContent(); err != nil {
+		return err
+	}
+	expected, err := p.ComputeID()
+	if err != nil {
+		return err
+	}
+	if p.ID != expected {
+		return fmt.Errorf("plan id mismatch: expected %s", expected)
+	}
+	return nil
+}
+
+func (p Plan) validateContent() error {
+	snapshot := PlanSnapshot{Repository: p.Repository, Head: p.BaseHead, ConfigDigest: p.ConfigDigest}
+	if err := snapshot.Validate(); err != nil {
+		return err
+	}
+	if err := p.Task.Validate(); err != nil {
+		return fmt.Errorf("invalid plan task: %w", err)
+	}
+	if len(p.Effects) == 0 {
+		return errors.New("plan effects are required")
+	}
+	for _, effect := range p.Effects {
+		if err := effect.Validate(); err != nil {
+			return fmt.Errorf("invalid plan effect: %w", err)
+		}
+	}
+	if len(p.PolicyDecisions) == 0 {
+		return errors.New("plan policy decisions are required")
+	}
+	for _, decision := range p.PolicyDecisions {
+		if decision.Operation == "" {
+			return errors.New("plan policy decision operation is required")
+		}
+	}
+	expectedCapabilities := requiredCapabilities(p.Effects)
+	if !slices.Equal(p.Requires, expectedCapabilities) {
+		return fmt.Errorf("plan capabilities do not match effects: expected %v", expectedCapabilities)
+	}
+	if !validMode(p.PreferredMode) {
+		return fmt.Errorf("unsupported preferred execution mode %q", p.PreferredMode)
+	}
+	if p.CreatedAt.IsZero() {
+		return errors.New("plan creation time is required")
+	}
+	return nil
+}
+
+type PlanStatus struct {
+	PlanID     PlanID    `json:"planId"`
+	State      PlanState `json:"state"`
+	StartedAt  time.Time `json:"startedAt,omitempty"`
+	FinishedAt time.Time `json:"finishedAt,omitempty"`
+	Error      string    `json:"error,omitempty"`
+}
+
+func (s PlanStatus) Validate() error {
+	if strings.TrimSpace(string(s.PlanID)) == "" {
+		return errors.New("plan status id is required")
+	}
+	switch s.State {
+	case PlanPlanned:
+		if !s.StartedAt.IsZero() || !s.FinishedAt.IsZero() || s.Error != "" {
+			return errors.New("planned status cannot contain execution data")
+		}
+	case PlanApplying:
+		if s.StartedAt.IsZero() || !s.FinishedAt.IsZero() {
+			return errors.New("applying status requires only a start time")
+		}
+	case PlanApplied:
+		if s.StartedAt.IsZero() || s.FinishedAt.IsZero() || s.Error != "" {
+			return errors.New("applied status requires start and finish times without an error")
+		}
+	case PlanFailed:
+		if s.StartedAt.IsZero() || s.FinishedAt.IsZero() || strings.TrimSpace(s.Error) == "" {
+			return errors.New("failed status requires start and finish times with an error")
+		}
+	default:
+		return fmt.Errorf("unsupported plan state %q", s.State)
+	}
+	if !s.StartedAt.IsZero() && !s.FinishedAt.IsZero() && s.FinishedAt.Before(s.StartedAt) {
+		return errors.New("plan finish time precedes start time")
+	}
+	return nil
+}
+
+type PlanRecord struct {
+	Plan   Plan       `json:"plan"`
+	Status PlanStatus `json:"status"`
+}
+
+type PlanDiff struct {
+	PlanID        PlanID       `json:"planId"`
+	Expected      PlanSnapshot `json:"expected"`
+	Actual        PlanSnapshot `json:"actual"`
+	Status        PlanState    `json:"status"`
+	HeadMatches   bool         `json:"headMatches"`
+	ConfigMatches bool         `json:"configMatches"`
+	Ready         bool         `json:"ready"`
+	Reasons       []string     `json:"reasons,omitempty"`
+}
+
+type PlanApplyResult struct {
+	PlanID   PlanID             `json:"planId"`
+	State    PlanState          `json:"state"`
+	Decision PlanPolicyDecision `json:"decision"`
+	Evidence []Evidence         `json:"evidence,omitempty"`
+	Error    string             `json:"error,omitempty"`
 }
 
 type ValidationPlan struct {
@@ -313,4 +515,41 @@ func validCapability(capability Capability) bool {
 	default:
 		return false
 	}
+}
+
+func requiredCapabilities(effects []Effect) []Capability {
+	seen := map[Capability]bool{}
+	var required []Capability
+	for _, effect := range effects {
+		for _, capability := range effect.Requires {
+			if !seen[capability] {
+				seen[capability] = true
+				required = append(required, capability)
+			}
+		}
+	}
+	return required
+}
+
+func validObjectID(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func validDigest(value string) bool {
+	const prefix = "sha256:"
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	encoded := strings.TrimPrefix(value, prefix)
+	if len(encoded) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(encoded)
+	return err == nil
 }

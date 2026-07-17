@@ -31,7 +31,7 @@ func (p *repositoryPort) Inspect(_ context.Context, request domain.RepositoryReq
 }
 
 func adapterForTest() (Adapter, *taskStore, *repositoryPort) {
-	store := &taskStore{task: domain.Task{ID: "3", Title: "Architecture V2", State: domain.TaskReady, Risk: domain.RiskMedium, Mode: domain.ExecutionRemote}}
+	store := &taskStore{task: domain.Task{ID: "3", Title: "Architecture", State: domain.TaskReady, Risk: domain.RiskMedium, Mode: domain.ExecutionRemote}}
 	repository := &repositoryPort{}
 	return Adapter{Services: app.Services{
 		Tasks:      app.TaskService{Tasks: store},

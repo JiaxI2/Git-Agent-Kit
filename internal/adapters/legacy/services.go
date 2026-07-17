@@ -1,4 +1,4 @@
-// Package legacy maps existing GIA production behavior to Architecture V2 ports.
+// Package legacy maps existing GIA production behavior to application ports.
 package legacy
 
 import (
@@ -9,9 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/adapters/planstore"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/app"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/config"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/domain"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/execution"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/gitx"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/issue"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/workflow"
@@ -24,13 +26,32 @@ type Adapter struct {
 
 func NewServices(repository, configPath string) app.Services {
 	adapter := &Adapter{Repository: repository, ConfigPath: configPath}
+	plans := planstore.New(repository, configPath)
+	executionService := app.ExecutionService{Selector: app.CapabilitySelector{Executors: []app.Executor{
+		execution.LocalExecutor{Name: "gia-local", Root: repository},
+	}}}
 	return app.Services{
-		Tasks:        app.TaskService{Tasks: adapter, Issues: adapter, Claimer: adapter},
+		Tasks:        app.TaskService{Tasks: adapter, Issues: adapter, Claimer: adapter, Policy: adapter},
 		Validation:   app.ValidationService{Tasks: adapter, Planner: adapter},
 		Workspace:    app.WorkspaceService{Workspace: adapter},
 		PullRequests: app.PRService{PullRequests: adapter},
 		Repository:   app.RepositoryService{Repository: adapter},
+		Execution:    executionService,
+		Plans: app.PlanService{
+			Plans: plans, Context: plans, Policy: adapter, Execution: executionService,
+		},
 	}
+}
+
+func (a *Adapter) Evaluate(_ context.Context, task domain.Task, operation domain.Operation) domain.PolicyDecision {
+	cfg, err := a.config()
+	if err != nil {
+		return domain.PolicyDecision{Allowed: false, Reasons: []string{err.Error()}}
+	}
+	if task.Executor != nil && !cfg.ExecutorAllowed(task.Executor.Name) {
+		return domain.PolicyDecision{Allowed: false, Reasons: []string{fmt.Sprintf("executor %q is not allowed", task.Executor.Name)}}
+	}
+	return domain.PolicyDecision{Allowed: true, Reasons: []string{fmt.Sprintf("%s allowed by repository policy", operation)}}
 }
 
 func (a *Adapter) List(ctx context.Context) ([]domain.Task, error) {

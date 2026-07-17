@@ -15,7 +15,7 @@ func main() {
 	if repository == "" {
 		repository = "."
 	}
-	server := mcp.Server{Repository: repository, Services: legacy.NewServices(repository, "")}
+	server := mcp.Server{Repository: repository, Services: legacy.NewServices(repository, os.Getenv("GIA_CONFIG"))}
 	if err := server.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

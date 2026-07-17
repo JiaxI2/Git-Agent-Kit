@@ -23,7 +23,7 @@ jobs:
       - name: Check formatting
         if: runner.os == 'Linux'
         shell: bash
-        run: test -z "$(gofmt -l ./cmd ./internal)"
+        run: test -z "$(gofmt -l ./cmd ./internal ./pkg)"
       - run: go test ./...
       - name: Race tests
         if: runner.os == 'Linux'

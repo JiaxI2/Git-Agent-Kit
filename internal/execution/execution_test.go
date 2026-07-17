@@ -32,7 +32,7 @@ func (c *remoteClient) Apply(context.Context, domain.Task, domain.Effect) (domai
 }
 
 func executionTask() domain.Task {
-	return domain.Task{ID: "3", Title: "Architecture V2", State: domain.TaskReady, Risk: domain.RiskMedium, Mode: domain.ExecutionLocal}
+	return domain.Task{ID: "3", Title: "Architecture", State: domain.TaskReady, Risk: domain.RiskMedium, Mode: domain.ExecutionLocal}
 }
 
 func TestLocalExecutorPreservesArgumentsAndRepositoryDirectory(t *testing.T) {

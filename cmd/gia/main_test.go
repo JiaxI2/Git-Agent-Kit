@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/config"
+	"github.com/JiaxI2/git-isolated-agent-kit/internal/domain"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/issue"
 	"github.com/JiaxI2/git-isolated-agent-kit/internal/workflow"
 )
@@ -29,6 +30,7 @@ func TestHelpFormsReturnSuccess(t *testing.T) {
 		{"help", "pr", "request"},
 		{"pr", "request", "--help"},
 		{"worktree", "create", "--help"},
+		{"plan", "create", "--help"},
 	}
 	for _, args := range tests {
 		args := args
@@ -404,6 +406,108 @@ func TestReadRepositoryFileRejectsSymlinkEscape(t *testing.T) {
 	}
 	if _, err := readRepositoryFile(repo, link); err == nil || !strings.Contains(err.Error(), "outside repository") {
 		t.Fatalf("symlink escape error=%v", err)
+	}
+}
+
+func TestPlanCommandsPersistInspectAndApplyOnce(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	runGitTest(t, filepath.Dir(repo), "init", "-b", "main", repo)
+	runGitTest(t, repo, "config", "user.name", "GIA Test")
+	runGitTest(t, repo, "config", "user.email", "gia@example.invalid")
+	if err := os.MkdirAll(filepath.Join(repo, ".gia"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(filepath.Join(repo, ".gia", "config.json"), config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("plan test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", ".gia/config.json", "README.md")
+	runGitTest(t, repo, "commit", "-m", "initial")
+
+	request := domain.CreatePlanRequest{
+		Task: domain.Task{ID: "5", Title: "Inspectable Plan", State: domain.TaskReady, Risk: domain.RiskMedium, Mode: domain.ExecutionLocal},
+		Effects: []domain.Effect{{
+			Kind: domain.EffectCommand, Command: "git", Args: []string{"status", "--porcelain"},
+			Requires: []domain.Capability{domain.CapabilityCommand, domain.CapabilityGit},
+		}},
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "plan-request.json"), encoded, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statusBefore := runGitTest(t, repo, "status", "--porcelain")
+	createdOutput := captureStdout(t, func() error {
+		return cmdPlan(context.Background(), []string{"create", "--repo", repo, "--input", "plan-request.json"})
+	})
+	var created struct {
+		Data domain.Plan `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(createdOutput), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Data.ID == "" {
+		t.Fatalf("created plan=%+v", created.Data)
+	}
+	if statusAfter := runGitTest(t, repo, "status", "--porcelain"); statusAfter != statusBefore {
+		t.Fatalf("plan runtime polluted worktree: before=%q after=%q", statusBefore, statusAfter)
+	}
+
+	showOutput := captureStdout(t, func() error {
+		return cmdPlan(context.Background(), []string{"show", "--repo", repo, string(created.Data.ID)})
+	})
+	var shown struct {
+		Data domain.PlanRecord `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(showOutput), &shown); err != nil {
+		t.Fatal(err)
+	}
+	if shown.Data.Status.State != domain.PlanPlanned {
+		t.Fatalf("shown plan=%+v", shown.Data)
+	}
+	diffOutput := captureStdout(t, func() error {
+		return cmdPlan(context.Background(), []string{"diff", "--repo", repo, "--id", string(created.Data.ID)})
+	})
+	var diff struct {
+		Data domain.PlanDiff `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(diffOutput), &diff); err != nil || !diff.Data.Ready {
+		t.Fatalf("diff=%+v err=%v", diff.Data, err)
+	}
+	applyOutput := captureStdout(t, func() error {
+		return cmdPlan(context.Background(), []string{"apply", "--repo", repo, "--id", string(created.Data.ID)})
+	})
+	var applied struct {
+		Data domain.PlanApplyResult `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(applyOutput), &applied); err != nil {
+		t.Fatal(err)
+	}
+	if applied.Data.State != domain.PlanApplied || len(applied.Data.Evidence) != 1 || applied.Data.Evidence[0].PlanID != created.Data.ID {
+		t.Fatalf("apply result=%+v", applied.Data)
+	}
+	if err := cmdPlan(context.Background(), []string{"apply", "--repo", repo, "--id", string(created.Data.ID)}); err == nil {
+		t.Fatal("second plan apply was accepted")
+	}
+}
+
+func TestPlanFailureUsesStructuredOutputAndNonzeroExit(t *testing.T) {
+	out := captureStdout(t, func() error {
+		if code := execute(context.Background(), []string{"plan", "show", "--repo", t.TempDir(), "not-a-plan"}); code != 1 {
+			t.Fatalf("exit code=%d, want 1", code)
+		}
+		return nil
+	})
+	var result output
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.OK || result.Command != "plan show" || result.Error == "" {
+		t.Fatalf("failure output=%+v", result)
 	}
 }
 
