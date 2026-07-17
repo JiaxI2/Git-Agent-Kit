@@ -101,6 +101,134 @@ func TestDoctorIncludesPermissionBoundaryGuidance(t *testing.T) {
 	t.Fatal("permission-boundary guidance missing")
 }
 
+func TestInspectGitHubIdentityMatchesConfiguredActor(t *testing.T) {
+	cfg := config.Default()
+	withDoctorRunner(t, func(_ context.Context, _ string, name string, args ...string) (string, error) {
+		if name != "gh" {
+			return "", fmt.Errorf("unexpected command %q", name)
+		}
+		switch {
+		case len(args) >= 2 && args[0] == "repo" && args[1] == "view":
+			return "owner/repo", nil
+		case len(args) >= 2 && args[0] == "api" && args[1] == "user":
+			return "owner", nil
+		default:
+			return "", fmt.Errorf("unexpected gh args: %v", args)
+		}
+	})
+	identity, detail, err := inspectGitHubIdentity(context.Background(), t.TempDir(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Kind != "user" || identity.Actor != "owner" || identity.Owner != "owner" || identity.Repository != "owner/repo" {
+		t.Fatalf("identity=%+v", identity)
+	}
+	if !strings.Contains(detail, "mode=shared-user") || !strings.Contains(detail, "actor=owner") {
+		t.Fatalf("detail=%q", detail)
+	}
+}
+
+func TestInspectGitHubIdentityRejectsUserTokenForGitHubAppMode(t *testing.T) {
+	cfg := config.Default()
+	cfg.Permissions.IdentityMode = config.IdentityModeGitHubApp
+	withDoctorRunner(t, func(_ context.Context, _ string, _ string, args ...string) (string, error) {
+		switch {
+		case len(args) >= 2 && args[0] == "repo" && args[1] == "view":
+			return "owner/repo", nil
+		case len(args) >= 3 && args[0] == "api" && args[1] == "installation/repositories":
+			return "", fmt.Errorf("installation token required")
+		case len(args) >= 2 && args[0] == "api" && args[1] == "user":
+			return "owner", nil
+		default:
+			return "", fmt.Errorf("unexpected gh args: %v", args)
+		}
+	})
+	_, detail, err := inspectGitHubIdentity(context.Background(), t.TempDir(), cfg)
+	if err == nil || !strings.Contains(detail, "authenticated as user owner") {
+		t.Fatalf("detail=%q err=%v", detail, err)
+	}
+}
+
+func TestInspectGitHubIdentityAcceptsGitHubAppInstallationToken(t *testing.T) {
+	cfg := config.Default()
+	cfg.Permissions.IdentityMode = config.IdentityModeGitHubApp
+	withDoctorRunner(t, func(_ context.Context, _ string, _ string, args ...string) (string, error) {
+		switch {
+		case len(args) >= 2 && args[0] == "repo" && args[1] == "view":
+			return "owner/repo", nil
+		case len(args) >= 3 && args[0] == "api" && args[1] == "installation/repositories":
+			return "1", nil
+		default:
+			return "", fmt.Errorf("unexpected gh args: %v", args)
+		}
+	})
+	identity, detail, err := inspectGitHubIdentity(context.Background(), t.TempDir(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Kind != "github-app" || identity.Actor != "github-app-installation" {
+		t.Fatalf("identity=%+v", identity)
+	}
+	if !strings.Contains(detail, "mode=github-app") {
+		t.Fatalf("detail=%q", detail)
+	}
+}
+
+func TestInspectApprovalPolicyMatchesIdentityProfile(t *testing.T) {
+	tests := []struct {
+		name         string
+		identityMode string
+		approvalMode string
+		identity     githubIdentity
+		approvals    int
+		codeOwner    bool
+		lastPush     bool
+		wantError    string
+	}{
+		{name: "shared owner merge", identityMode: config.IdentityModeSharedUser, approvalMode: config.ApprovalModeOwnerMerge, identity: githubIdentity{Kind: "user", Actor: "owner", Owner: "owner", Repository: "owner/repo"}},
+		{name: "owner merge remote review conflict", identityMode: config.IdentityModeSharedUser, approvalMode: config.ApprovalModeOwnerMerge, identity: githubIdentity{Kind: "user", Actor: "owner", Owner: "owner", Repository: "owner/repo"}, approvals: 1, codeOwner: true, lastPush: true, wantError: "conflict with owner-merge"},
+		{name: "app required review", identityMode: config.IdentityModeGitHubApp, approvalMode: config.ApprovalModeRequiredReview, identity: githubIdentity{Kind: "github-app", Actor: "github-app-installation", Owner: "owner", Repository: "owner/repo"}, approvals: 1},
+		{name: "shared owner cannot self review", identityMode: config.IdentityModeSharedUser, approvalMode: config.ApprovalModeRequiredReview, identity: githubIdentity{Kind: "user", Actor: "owner", Owner: "owner", Repository: "owner/repo"}, approvals: 1, wantError: "cannot satisfy owner review"},
+		{name: "required review not enforced", identityMode: config.IdentityModeTeam, approvalMode: config.ApprovalModeRequiredReview, identity: githubIdentity{Kind: "user", Actor: "agent", Owner: "owner", Repository: "owner/repo"}, wantError: "do not require a review"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Permissions.IdentityMode = tt.identityMode
+			cfg.Permissions.ApprovalMode = tt.approvalMode
+			payload := fmt.Sprintf(`[{"type":"pull_request","parameters":{"required_approving_review_count":%d,"require_code_owner_review":%t,"require_last_push_approval":%t}}]`, tt.approvals, tt.codeOwner, tt.lastPush)
+			withDoctorRunner(t, func(_ context.Context, _ string, name string, args ...string) (string, error) {
+				if name != "gh" || len(args) < 2 || args[0] != "api" || !strings.Contains(args[1], "/rules/branches/main") {
+					return "", fmt.Errorf("unexpected command: %s %v", name, args)
+				}
+				return payload, nil
+			})
+			detail, err := inspectApprovalPolicy(context.Background(), t.TempDir(), cfg, tt.identity)
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("detail=%q err=%v", detail, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("detail=%q err=%v, want %q", detail, err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestInspectApprovalPolicyRejectsMissingPullRequestRule(t *testing.T) {
+	cfg := config.Default()
+	identity := githubIdentity{Kind: "user", Actor: "owner", Owner: "owner", Repository: "owner/repo"}
+	withDoctorRunner(t, func(_ context.Context, _ string, _ string, _ ...string) (string, error) {
+		return `[{"type":"required_status_checks"}]`, nil
+	})
+	detail, err := inspectApprovalPolicy(context.Background(), t.TempDir(), cfg, identity)
+	if err == nil || !strings.Contains(detail, "requires an effective pull_request rule") {
+		t.Fatalf("detail=%q err=%v", detail, err)
+	}
+}
+
 func TestDefaultConfigHasProfiles(t *testing.T) {
 	c := config.Default()
 	for _, p := range []string{"smoke", "full", "release"} {
@@ -394,6 +522,15 @@ func withClaimRunner(t *testing.T, runner func(context.Context, string, string, 
 	t.Cleanup(func() {
 		claimRun = original
 		claimRunWithBodyFile = originalBody
+	})
+}
+
+func withDoctorRunner(t *testing.T, runner func(context.Context, string, string, ...string) (string, error)) {
+	t.Helper()
+	original := doctorRun
+	doctorRun = runner
+	t.Cleanup(func() {
+		doctorRun = original
 	})
 }
 

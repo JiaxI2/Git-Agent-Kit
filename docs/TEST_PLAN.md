@@ -117,6 +117,9 @@ Windows：
 6. `init --format json|yaml|yml` 输出实际配置路径，多配置歧义给出可恢复错误。
 7. `doctor` 明确提示 permissions 是 workflow policy，GitHub App/ruleset 才是
    硬权限边界。
+8. `doctor` 覆盖 `shared-user|github-app|team` actor 检测，并拒绝
+   `owner-merge` 与强制审批 ruleset、`required-review` 与零审批 ruleset、
+   以及共享 owner 身份自审的冲突组合。
 
 ## 反馈闭环
 

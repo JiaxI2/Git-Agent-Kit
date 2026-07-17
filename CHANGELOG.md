@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **feat**: 新增 `identityMode` / `approvalMode` JSON、YAML 配置，
+  `doctor` 对照实际 GitHub actor、仓库 owner 与有效 PR ruleset，阻止共享用户
+  身份被误配置为可自审的独立 Agent。
 - **docs**: 更新 GIA Visio 工作流图为无填充架构样式，并同步可编辑
   VSDX、SVG、PNG 与可复现 Diagram IR。
 

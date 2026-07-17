@@ -63,6 +63,13 @@ gh auth login
 对应格式。成功后会明确列出下一步：检查实际配置文件，然后选择将 `.gia/`
 提交给团队，或将其加入目标仓库的 `.gitignore`；随后运行 `doctor`。
 
+默认身份策略是 `shared-user + owner-merge`：本地 Agent 复用当前 `gh` 用户，
+GitHub 不要求该用户审批自己的 PR，仓库所有者以最终 merge 作为人工确认。
+如果 Agent 使用独立 GitHub App 或团队账号，可改为
+`github-app + required-review` 或 `team + required-review`。`doctor` 会核对实际
+GitHub actor、仓库 owner 和默认分支的有效 ruleset，身份或审批规则不一致时
+失败关闭。
+
 ## 傻瓜式使用
 
 用户只输入一个优化方向：
@@ -133,7 +140,7 @@ gia feedback --repo F:\Project\Demo --category ux --message "worktree 路径提�
 |---|---|
 | `help` / `--help` | 查看顶层或指定命令帮助 |
 | `init` | 在目标仓库生成单一 `.gia/config.json|yaml|yml` |
-| `doctor` | 检查 Git、GitHub CLI、Go、认证和配置 |
+| `doctor` | 检查 Git、GitHub CLI、认证、身份模式和审批 ruleset |
 | `issue create` | 从一句优化方向创建结构化 Issue |
 | `issue list` | 列出打开且带有 ready 标签的 Issue |
 | `scan` | 查找 `agent:ready` Issue |
@@ -172,6 +179,8 @@ gh workflow run gia-agent-dispatch.yml -f issue_number=123
 - 自定义分支规则；
 - 自定义 smoke/full/release 命令；
 - 定义保护路径；
+- 选择 `shared-user`、`github-app` 或 `team` 身份模式；
+- 选择所有者合并确认或强制独立 Review；
 - 配置通知 Webhook 或命令；
 - 决定是否允许自动认领。
 
@@ -196,6 +205,7 @@ gh workflow run gia-agent-dispatch.yml -f issue_number=123
 - GIA CLI/runtime 不自动合并、打 Tag 或发布 Release；canonical release
   workflow 只响应用户已创建并推送的版本 Tag。
 - GIA 不绕过 GitHub 分支保护。
-- `permissions` 只表达 workflow policy；用户与 Agent 的硬身份边界必须由
-  独立 GitHub App/token 和 ruleset 建立。同一 `gh` 用户身份不能充当该边界。
+- `shared-user` 模式下 Agent 与用户共享同一 GitHub actor，所有者 merge 只是
+  人工流程门禁，不是硬身份隔离；需要正式网页审批时必须使用 `github-app`
+  或 `team` 模式，并由独立 GitHub App/token 和 ruleset 建立真实边界。
 - 默认配置的验证命令是 Go 仓库示例，目标项目应按技术栈调整。

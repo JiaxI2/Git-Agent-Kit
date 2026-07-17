@@ -19,6 +19,12 @@ GIA 定义：任务规格、风险等级、执行器权限、分支规则、交�
 合并和发布默认只属于 `user`。该策略用于 GIA 的决策与审计，不是凭据边界；硬隔离
 必须由独立 GitHub App/token、分支保护和发布环境实现。
 
+身份与审批是两个正交策略。`shared-user` 表示 Agent 复用当前用户 `gh` 凭据，
+默认搭配 `owner-merge`，由仓库所有者在 CI 后执行最终合并；它不能产生独立的
+GitHub Review actor。`github-app` 和 `team` 表示可区分的 GitHub actor，可搭配
+`required-review`。`doctor` 将声明策略与实际 actor、仓库 owner、默认分支有效
+ruleset 对照，避免把未来的独立 App 模型误当成当前事实。
+
 ## 执行面
 
 `web-agent`、`local-agent`、`ci`、`human` 都是可替换执行器。执行器不得隐式共享本地状态，只能通过 GitHub Issue、分支、commit、PR 和评论交接。

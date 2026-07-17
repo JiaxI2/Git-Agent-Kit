@@ -56,7 +56,18 @@ type ProtectedConfig struct {
 	RejectForcePush bool     `json:"rejectForcePush" yaml:"rejectForcePush"`
 }
 
+const (
+	IdentityModeSharedUser = "shared-user"
+	IdentityModeGitHubApp  = "github-app"
+	IdentityModeTeam       = "team"
+
+	ApprovalModeOwnerMerge     = "owner-merge"
+	ApprovalModeRequiredReview = "required-review"
+)
+
 type PermissionConfig struct {
+	IdentityMode       string   `json:"identityMode" yaml:"identityMode"`
+	ApprovalMode       string   `json:"approvalMode" yaml:"approvalMode"`
 	AllowedExecutors   []string `json:"allowedExecutors" yaml:"allowedExecutors"`
 	ApprovalPrincipals []string `json:"approvalPrincipals" yaml:"approvalPrincipals"`
 	MergePrincipals    []string `json:"mergePrincipals" yaml:"mergePrincipals"`
@@ -256,6 +267,9 @@ func loadPath(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	applyPermissionDefaults(&cfg.Permissions)
+	if err := validatePermissionModes(cfg.Permissions); err != nil {
+		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+	}
 	return cfg, nil
 }
 
@@ -276,6 +290,8 @@ func decodeOne(decode func(interface{}) error, target interface{}) error {
 
 func defaultPermissions() PermissionConfig {
 	return PermissionConfig{
+		IdentityMode:       IdentityModeSharedUser,
+		ApprovalMode:       ApprovalModeOwnerMerge,
 		AllowedExecutors:   []string{"*"},
 		ApprovalPrincipals: []string{"user"},
 		MergePrincipals:    []string{"user"},
@@ -285,6 +301,12 @@ func defaultPermissions() PermissionConfig {
 
 func applyPermissionDefaults(permissions *PermissionConfig) {
 	defaults := defaultPermissions()
+	if strings.TrimSpace(permissions.IdentityMode) == "" {
+		permissions.IdentityMode = defaults.IdentityMode
+	}
+	if strings.TrimSpace(permissions.ApprovalMode) == "" {
+		permissions.ApprovalMode = defaults.ApprovalMode
+	}
 	if permissions.AllowedExecutors == nil {
 		permissions.AllowedExecutors = defaults.AllowedExecutors
 	}
@@ -297,6 +319,20 @@ func applyPermissionDefaults(permissions *PermissionConfig) {
 	if permissions.ReleasePrincipals == nil {
 		permissions.ReleasePrincipals = defaults.ReleasePrincipals
 	}
+}
+
+func validatePermissionModes(permissions PermissionConfig) error {
+	switch permissions.IdentityMode {
+	case IdentityModeSharedUser, IdentityModeGitHubApp, IdentityModeTeam:
+	default:
+		return fmt.Errorf("permissions.identityMode %q is invalid; use %s, %s, or %s", permissions.IdentityMode, IdentityModeSharedUser, IdentityModeGitHubApp, IdentityModeTeam)
+	}
+	switch permissions.ApprovalMode {
+	case ApprovalModeOwnerMerge, ApprovalModeRequiredReview:
+	default:
+		return fmt.Errorf("permissions.approvalMode %q is invalid; use %s or %s", permissions.ApprovalMode, ApprovalModeOwnerMerge, ApprovalModeRequiredReview)
+	}
+	return nil
 }
 
 func Save(path string, cfg Config) error {
